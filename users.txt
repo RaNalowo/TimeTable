@@ -1,0 +1,3 @@
+admin@univ.edu|System Admin|Admin123!|admin|EMP001|
+student@univ.edu|Test Student|Student123!|student|STU001|
+teacher@univ.edu|Test Teacher|Teacher123!|teacher|EMP002|

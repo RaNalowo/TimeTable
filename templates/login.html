@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Secure Login</title>
+  <style>
+    body { font-family: sans-serif; background: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .card { background: #fff; padding: 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 340px; }
+    h1 { margin: 0 0 20px; font-size: 22px; text-align: center; }
+    input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+    button { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .error { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 18px; }
+    .links { margin-top: 12px; text-align: center; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Secure Login</h1>
+    <form id="loginForm">
+      <input id="identifier" placeholder="Email / Student ID / Employee ID" required />
+      <input id="password" type="password" placeholder="Password" required />
+      <button type="submit">Sign In</button>
+      <p id="error" class="error"></p>
+    </form>
+    <div class="links">
+      <a href="forgot.html">Forgot password?</a>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
