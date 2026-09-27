@@ -6,9 +6,7 @@
   <title>Dashboard</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; background: #f3f4f6; margin: 0; padding: 24px; }
-
-    .container { max-width: 1000px; margin: 0 auto; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
 
     header {
       display: flex; justify-content: space-between; align-items: center;
@@ -53,14 +51,6 @@
       font-size: 12px; background: #e0e7ff; color: #3730a3;
     }
 
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
-    .actions button {
-      padding: 10px 16px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
-    }
-    .actions button:hover { background: #1d4ed8; }
-
-    /* Add User form */
     #addUserForm { display: grid; gap: 10px; max-width: 420px; }
     #addUserForm input, #addUserForm select {
       padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
@@ -71,64 +61,54 @@
     }
     #addUserForm button:hover { background: #1d4ed8; }
     #addUserMsg { font-size: 13px; min-height: 18px; margin: 0; }
-
     #adminUsers { padding-left: 20px; font-size: 14px; }
 
-    @media (max-width: 600px) {
-      body { padding: 12px; }
+    @media (max-width: 768px) {
       header h1 { font-size: 18px; }
       .card .value { font-size: 18px; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
 
-    <header>
-      <div>
-        <h1 id="welcome">Welcome</h1>
-        <div class="user" id="userInfo">Loading...</div>
+      <header>
+        <div>
+          <h1 id="welcome">Welcome</h1>
+          <div class="user" id="userInfo">Loading...</div>
+        </div>
+        <button onclick="logout()">Logout</button>
+      </header>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="panel" id="rolePanel"></div>
+
+      <div class="panel" id="adminPanel" style="display:none;">
+        <h2>Admin · Add User</h2>
+        <form id="addUserForm">
+          <input id="newEmail" type="email" placeholder="Email" required />
+          <input id="newFullName" placeholder="Full name" required />
+          <input id="newPassword" type="password" placeholder="Password" required />
+          <select id="newRole">
+            <option value="student">Student</option>
+            <option value="teacher">Teacher</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input id="newStudentId" placeholder="Student ID (optional)" />
+          <input id="newEmployeeId" placeholder="Employee ID (optional)" />
+          <button type="submit">Create User</button>
+          <p id="addUserMsg"></p>
+        </form>
+
+        <h2 style="margin-top:24px;">Admin · User List</h2>
+        <button onclick="loadAdminUsers()" style="padding:8px 16px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;">Load Users</button>
+        <ul id="adminUsers"></ul>
       </div>
-      <button onclick="logout()">Logout</button>
-    </header>
 
-    <div class="cards" id="cards"></div>
-
-    <div class="panel" id="rolePanel"></div>
-
-    <div class="panel">
-      <h2>Quick Actions</h2>
-      <div class="actions">
-        <button onclick="go('timetable')">View Timetable</button>
-        <button onclick="window.location.href='/rooms.html'">Manage Rooms</button>
-        <button onclick="go('export')">Export</button>
-        <button onclick="go('requests')">Requests</button>
-      </div>
-    </div>
-
-    <!-- Admin only -->
-    <div class="panel" id="adminPanel" style="display:none;">
-      <h2>Admin · Add User</h2>
-      <form id="addUserForm">
-        <input id="newEmail" type="email" placeholder="Email" required />
-        <input id="newFullName" placeholder="Full name" required />
-        <input id="newPassword" type="password" placeholder="Password" required />
-        <select id="newRole">
-          <option value="student">Student</option>
-          <option value="teacher">Teacher</option>
-          <option value="admin">Admin</option>
-        </select>
-        <input id="newStudentId" placeholder="Student ID (optional)" />
-        <input id="newEmployeeId" placeholder="Employee ID (optional)" />
-        <button type="submit">Create User</button>
-        <p id="addUserMsg"></p>
-      </form>
-
-      <h2 style="margin-top:24px;">Admin · User List</h2>
-      <button onclick="loadAdminUsers()" style="padding:8px 16px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;">Load Users</button>
-      <ul id="adminUsers"></ul>
-    </div>
-
+    </main>
   </div>
   <script src="/static/app.js"></script>
 </body>

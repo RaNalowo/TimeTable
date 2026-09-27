@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manage Faculty</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #fff; padding: 16px 24px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header a { color: #2563eb; text-decoration: none; font-size: 14px; }
+
+    .panel {
+      background: #fff; padding: 20px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+    }
+    .panel h2 { margin-top: 0; font-size: 16px; }
+
+    form#teacherForm {
+      display: grid; gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-items: end;
+    }
+    form#teacherForm input, form#teacherForm select {
+      padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
+    }
+    form#teacherForm button {
+      padding: 9px 14px; background: #2563eb; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer;
+    }
+    form#teacherForm button:hover { background: #1d4ed8; }
+
+    #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9fafb; font-weight: 600; }
+    tr:hover { background: #f9fafb; }
+
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 10px;
+      font-size: 12px; background: #e0e7ff; color: #3730a3;
+    }
+    .btn-del {
+      padding: 4px 10px; background: #dc2626; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    .btn-edit {
+      padding: 4px 10px; background: #0891b2; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+  <div id="sidebar-mount"></div>
+  <main class="main-content">
+
+    <header>
+      <h1>Manage Faculty Profiles</h1>
+      <a href="/dashboard.html">← Back to Dashboard</a>
+    </header>
+
+    <div class="panel" id="formPanel" style="display:none;">
+      <h2 id="formTitle">Add Faculty</h2>
+      <form id="teacherForm">
+        <input id="full_name" placeholder="Full name" required />
+        <input id="email" type="email" placeholder="Institutional email" required />
+        <input id="academic_title" placeholder="Academic title (Dr. / Prof.)" />
+        <input id="department" placeholder="Department" required />
+        <input id="max_weekly_hours" type="number" min="1" max="40" placeholder="Max weekly hours (1-40)" required />
+        <input id="max_daily_hours" type="number" min="1" max="12" placeholder="Max daily hours (1-12)" required />
+        <input id="qualified_subjects" placeholder="Qualified subjects (comma separated)" />
+        <button type="submit" id="formSubmitBtn">Save Faculty</button>
+      </form>
+      <p id="formMsg"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Faculty Directory</h2>
+      <p id="accessMsg" style="font-size:13px;color:#888;"></p>
+      <input id="teacherFilter" placeholder="Filter faculty..." oninput="filterTeachers()"
+         style="margin-bottom:8px; padding:6px 10px; width:240px; border:1px solid #ccc; border-radius:6px;" />
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Title</th>
+            <th>Department</th>
+            <th>Max Week</th>
+            <th>Max Day</th>
+            <th>Qualified Subjects</th>
+            <th id="actionCol">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="teacherTable"></tbody>
+      </table>
+    </div>
+
+  </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

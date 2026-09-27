@@ -56,7 +56,7 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
     else:
         base["role"] = "student"
         base["cards"] = {
-            "today_classes": 4,
+            "today_classes": 6,
             "next_room": "A-203",
             "pending_requests": 0,
             "timetable_status": "Published",
@@ -66,7 +66,9 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
                 {"time": "08:30", "course": "Math", "room": "A-203", "teacher": "Dr. Smith"},
                 {"time": "10:15", "course": "Physics", "room": "B-101", "teacher": "Dr. Lee"},
                 {"time": "12:00", "course": "Programming", "room": "Lab-2", "teacher": "Dr. Ali"},
-                {"time": "14:00", "course": "English", "room": "C-305", "teacher": "Ms. Jones"},
+                {"time": "13:30", "course": "English", "room": "C-305", "teacher": "Ms. Jones"},
+                {"time": "15:15", "course": "Data Structures", "room": "Lab-1", "teacher": "Prof. Dana"},
+                {"time": "17:00", "course": "Discrete Math", "room": "A-101", "teacher": "Dr. Aidar"},
             ],
             "next_lecture": {
                 "course": "Math",

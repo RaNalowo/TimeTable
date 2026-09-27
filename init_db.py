@@ -84,8 +84,90 @@ def seed_rooms():
     db.commit()
     print(f"Seeded {len(samples)} rooms")
 
+def seed_teachers():
+    from db.models import Teacher
+    if db.query(Teacher).count() > 0:
+        print("Teachers already exist, skipping")
+        return
+
+    samples = [
+        Teacher(full_name="Dr. Arman", email="arman@univ.edu",
+                academic_title="Dr.", department="Computer Science",
+                max_weekly_hours=18, max_daily_hours=4,
+                qualified_subjects="Algorithms, Programming"),
+        Teacher(full_name="Prof. Dana", email="dana@univ.edu",
+                academic_title="Prof.", department="Computer Science",
+                max_weekly_hours=20, max_daily_hours=4,
+                qualified_subjects="Data Structures, Database Systems"),
+        Teacher(full_name="Dr. Aidar", email="aidar@univ.edu",
+                academic_title="Dr.", department="Mathematics",
+                max_weekly_hours=16, max_daily_hours=4,
+                qualified_subjects="Calculus, Linear Algebra"),
+    ]
+    db.add_all(samples)
+    db.commit()
+    print(f"Seeded {len(samples)} teachers")
+
+def seed_student_groups():
+    from db.models import StudentGroup
+    if db.query(StudentGroup).count() > 0:
+        print("Student groups already exist, skipping")
+        return
+
+    samples = [
+        StudentGroup(group_code="CS-2201", program="Computer Science", year=2, student_count=25),
+        StudentGroup(group_code="CS-2202", program="Computer Science", year=2, student_count=24),
+        StudentGroup(group_code="CS-2301", program="Computer Science", year=3, student_count=22),
+        StudentGroup(group_code="CS-2302", program="Computer Science", year=3, student_count=20),
+        StudentGroup(group_code="SE-2301", program="Software Engineering", year=3, student_count=28),
+    ]
+    db.add_all(samples)
+    db.commit()
+    print(f"Seeded {len(samples)} student groups")
+
+def seed_courses():
+    from db.models import Course
+    if db.query(Course).count() > 0:
+        print("Courses already exist, skipping")
+        return
+
+    samples = [
+        Course(course_code="CS201", course_name="Object-Oriented Programming",
+               credits=5, semester_level="Year 2, Fall",
+               total_hours=5, lecture_hours=3, practice_hours=0, lab_hours=2,
+               target_groups="CS-2201, CS-2202", department="Computer Science"),
+        Course(course_code="CS102", course_name="Database Systems",
+               credits=5, semester_level="Year 1, Spring",
+               total_hours=4, lecture_hours=2, practice_hours=0, lab_hours=2,
+               target_groups="CS-2301", department="Computer Science"),
+        Course(course_code="MATH101", course_name="Calculus I",
+               credits=6, semester_level="Year 1, Fall",
+               total_hours=6, lecture_hours=4, practice_hours=2, lab_hours=0,
+               target_groups="CS-2301, CS-2302, SE-2301", department="Mathematics"),
+        Course(course_code="CS301", course_name="Algorithms",
+               credits=5, semester_level="Year 3, Fall",
+               total_hours=5, lecture_hours=3, practice_hours=2, lab_hours=0,
+               target_groups="CS-2201", department="Computer Science"),
+    ]
+    db.add_all(samples)
+    db.commit()
+    print(f"Seeded {len(samples)} courses")
+
+def seed_preference_window():
+    from db.models import PreferenceWindow
+    if db.query(PreferenceWindow).count() > 0:
+        print("Preference window already exists, skipping")
+        return
+    db.add(PreferenceWindow(semester="Current", is_frozen=False))
+    db.commit()
+    print("Seeded preference window (open)")
+
 
 load_users_from_file()
 seed_rooms()
+seed_teachers()
+seed_student_groups()
+seed_courses()
+seed_preference_window()
 db.close()
 print("Done.")

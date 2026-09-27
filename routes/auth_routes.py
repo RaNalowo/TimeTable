@@ -56,7 +56,7 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
     try:
         payload = decode_token(token)
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     user = db.query(User).filter_by(id=int(payload["sub"])).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")

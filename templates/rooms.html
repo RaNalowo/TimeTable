@@ -6,8 +6,7 @@
   <title>Manage Rooms</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; background: #f3f4f6; margin: 0; padding: 24px; }
-    .container { max-width: 1100px; margin: 0 auto; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
 
     header {
       display: flex; justify-content: space-between; align-items: center;
@@ -16,7 +15,6 @@
       flex-wrap: wrap; gap: 12px;
     }
     header h1 { margin: 0; font-size: 20px; }
-    header a { color: #2563eb; text-decoration: none; font-size: 14px; }
 
     .panel {
       background: #fff; padding: 20px; border-radius: 12px;
@@ -60,46 +58,50 @@
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
 
-    <header>
-      <h1>Manage Campus Rooms</h1>
-      <a href="/dashboard.html">← Back to Dashboard</a>
-    </header>
+      <header>
+        <h1>Manage Campus Rooms</h1>
+      </header>
 
-    <div class="panel" id="formPanel" style="display:none;">
-      <h2 id="formTitle">Add Room</h2>
-      <form id="roomForm">
-        <input id="campus" placeholder="Campus (optional)" />
-        <input id="building" placeholder="Building" required />
-        <input id="room_code" placeholder="Room Code" required />
-        <input id="capacity" type="number" min="1" placeholder="Capacity" required />
-        <select id="room_type" required></select>
-        <input id="equipment" placeholder="Equipment (comma separated)" />
-        <button type="submit" id="formSubmitBtn">Save Room</button>
-      </form>
-      <p id="formMsg"></p>
-    </div>
+      <div class="panel" id="formPanel" style="display:none;">
+        <h2 id="formTitle">Add Room</h2>
+        <form id="roomForm">
+          <input id="campus" placeholder="Campus (optional)" />
+          <input id="building" placeholder="Building" required />
+          <input id="room_code" placeholder="Room Code" required />
+          <input id="capacity" type="number" min="1" placeholder="Capacity" required />
+          <select id="room_type" required></select>
+          <input id="equipment" placeholder="Equipment (comma separated)" />
+          <button type="submit" id="formSubmitBtn">Save Room</button>
+        </form>
+        <p id="formMsg"></p>
+      </div>
 
-    <div class="panel">
-      <h2>Room Directory</h2>
-      <p id="accessMsg" style="font-size:13px;color:#888;"></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Campus</th>
-            <th>Building</th>
-            <th>Room</th>
-            <th>Capacity</th>
-            <th>Type</th>
-            <th>Equipment</th>
-            <th id="actionCol">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="roomTable"></tbody>
-      </table>
-    </div>
+      <div class="panel">
+        <h2>Room Directory</h2>
+        <p id="accessMsg" style="font-size:13px;color:#888;"></p>
+        <input id="roomFilter" placeholder="Filter rooms..." oninput="filterRooms()"
+               style="margin-bottom:8px; padding:6px 10px; width:240px; border:1px solid #ccc; border-radius:6px;" />
+        <table>
+          <thead>
+            <tr>
+              <th>Campus</th>
+              <th>Building</th>
+              <th>Room</th>
+              <th>Capacity</th>
+              <th>Type</th>
+              <th>Equipment</th>
+              <th id="actionCol">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="roomTable"></tbody>
+        </table>
+      </div>
 
+    </main>
   </div>
   <script src="/static/app.js"></script>
 </body>

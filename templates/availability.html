@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Teacher Availability</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #fff; padding: 16px 24px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header a { color: #2563eb; text-decoration: none; font-size: 14px; }
+
+    .panel {
+      background: #fff; padding: 20px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+    }
+    .panel h2 { margin-top: 0; font-size: 16px; }
+
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+    .legend span { display: flex; align-items: center; gap: 6px; }
+    .swatch {
+      width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1px solid #ccc;
+    }
+    .swatch.preferred { background: #86efac; }
+    .swatch.neutral   { background: #e5e7eb; }
+    .swatch.blocked   { background: #fca5a5; }
+
+    table.grid {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    table.grid th, table.grid td {
+      border: 1px solid #e5e7eb; padding: 6px; text-align: center;
+    }
+    table.grid th { background: #f9fafb; font-weight: 600; }
+    table.grid td.slot-label { background: #f9fafb; font-weight: 500; }
+
+    td.cell {
+      cursor: pointer; user-select: none; transition: background 0.15s;
+      height: 36px;
+    }
+    td.cell.preferred { background: #86efac; }
+    td.cell.neutral   { background: #e5e7eb; }
+    td.cell.blocked   { background: #fca5a5; }
+    td.cell:hover { outline: 2px solid #2563eb; }
+
+    .readonly td.cell { cursor: not-allowed; opacity: 0.7; }
+
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .actions button {
+      padding: 9px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+    }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #6b7280; color: #fff; }
+    .btn-secondary:hover { background: #4b5563; }
+    .btn-danger { background: #dc2626; color: #fff; }
+    .btn-danger:hover { background: #b91c1c; }
+
+    #msg { margin-top: 12px; font-size: 13px; min-height: 18px; }
+    .stat {
+      display: inline-block; padding: 6px 12px; border-radius: 6px;
+      background: #f3f4f6; font-size: 13px; margin-right: 8px;
+    }
+    .stat.ok { background: #dcfce7; color: #166534; }
+    .stat.bad { background: #fee2e2; color: #991b1b; }
+
+    #adminTools { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+    #teacherSelect { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+  <div id="sidebar-mount"></div>
+  <main class="main-content">
+
+    <header>
+      <h1>Teacher Availability Preference</h1>
+      <a href="/dashboard.html">← Back to Dashboard</a>
+    </header>
+
+    <div class="panel">
+      <h2 id="title">My Weekly Availability</h2>
+      <p id="hint" style="font-size:13px;color:#666;">
+        Click a cell to cycle: <b>Preferred → Neutral → Blocked → Preferred</b>
+      </p>
+
+      <div class="legend">
+        <span><i class="swatch preferred"></i> Preferred</span>
+        <span><i class="swatch neutral"></i> Neutral</span>
+        <span><i class="swatch blocked"></i> Blocked / Unavailable</span>
+      </div>
+
+      <div id="statsRow" style="margin-bottom:10px;"></div>
+
+      <table class="grid" id="gridTable"></table>
+
+      <div class="actions" id="actions">
+        <button class="btn-primary" id="saveBtn" onclick="saveAvailability()">Submit Preferences</button>
+        <button class="btn-secondary" onclick="resetMatrix()">Reset to Neutral</button>
+      </div>
+
+      <p id="msg"></p>
+
+      <div id="adminTools" style="display:none;">
+        <h2>Admin Controls</h2>
+        <p>Status: <b id="freezeStatus">Loading...</b></p>
+        <button class="btn-danger" id="freezeBtn" onclick="toggleFreeze()">Toggle Freeze</button>
+        <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+        <h2>View Teacher Availability</h2>
+        <select id="teacherSelect" onchange="viewTeacherAvailability()">
+          <option value="">— Select a teacher —</option>
+        </select>
+        <div id="teacherView"></div>
+      </div>
+    </div>
+
+  </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

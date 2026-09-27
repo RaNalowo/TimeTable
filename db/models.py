@@ -70,3 +70,61 @@ class Room(Base):
     __table_args__ = (
         UniqueConstraint("building", "room_code", name="uq_building_room"),
     )
+
+class Teacher(Base):
+    __tablename__ = "teachers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False, index=True)
+    academic_title = Column(String, nullable=True)   # Dr. / Prof. / Lecturer
+    department = Column(String, nullable=False)
+    max_weekly_hours = Column(Integer, nullable=False, default=20)
+    max_daily_hours = Column(Integer, nullable=False, default=4)
+    qualified_subjects = Column(String, nullable=True)  # 逗号分隔，如 "Algorithms, Databases"
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    user = relationship("User")
+
+class Course(Base):
+    __tablename__ = "courses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_code = Column(String, unique=True, nullable=False, index=True)
+    course_name = Column(String, nullable=False)
+    credits = Column(Integer, nullable=False)          # ECTS
+    semester_level = Column(String, nullable=True)     # 如 "Year 2, Spring"
+    total_hours = Column(Integer, nullable=False)      # 每周总联系小时
+    lecture_hours = Column(Integer, nullable=False, default=0)
+    practice_hours = Column(Integer, nullable=False, default=0)
+    lab_hours = Column(Integer, nullable=False, default=0)
+    target_groups = Column(String, nullable=True)      # 逗号分隔 "CS-2301, CS-2302"
+    department = Column(String, nullable=True)
+
+class TeacherAvailability(Base):
+    __tablename__ = "teacher_availability"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    matrix_json = Column(String, nullable=False, default="{}")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class PreferenceWindow(Base):
+    __tablename__ = "preference_windows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    semester = Column(String, nullable=False, default="Current")
+    is_frozen = Column(Boolean, default=False)
+    freeze_date = Column(DateTime, nullable=True)
+
+class StudentGroup(Base):
+    __tablename__ = "student_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_code = Column(String, unique=True, nullable=False, index=True)  # 如 CS-2301
+    program = Column(String, nullable=True)      # 专业
+    year = Column(Integer, nullable=True)        # 年级
+    student_count = Column(Integer, default=0)   # 学生人数
