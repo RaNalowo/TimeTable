@@ -12,6 +12,11 @@ from routes.teacher_routes import router as teacher_router
 from routes.course_routes import router as course_router
 from routes.availability_routes import router as availability_router
 from routes.student_group_routes import router as group_router
+from routes.constraint_routes import router as constraint_router
+from routes.soft_constraint_routes import router as soft_constraint_router
+from routes.generator_routes import router as generator_router
+from routes.conflict_routes import router as conflict_router
+from routes.room_fitting_routes import router as room_fitting_router
 
 
 
@@ -34,6 +39,11 @@ app.include_router(teacher_router)
 app.include_router(course_router)
 app.include_router(availability_router)
 app.include_router(group_router)
+app.include_router(constraint_router)
+app.include_router(soft_constraint_router)
+app.include_router(generator_router)
+app.include_router(conflict_router)
+app.include_router(room_fitting_router)
 
 
 
@@ -52,14 +62,6 @@ def login_page():
 def dashboard_page():
     return FileResponse("templates/dashboard.html")
 
-@app.get("/forgot.html")
-def forgot_page():
-    return FileResponse("templates/forgot.html")
-
-@app.get("/reset.html")
-def reset_page():
-    return FileResponse("templates/reset.html")
-
 @app.get("/rooms.html")
 def rooms_page():
     return FileResponse("templates/rooms.html")
@@ -75,3 +77,23 @@ def courses_page():
 @app.get("/availability.html")
 def availability_page():
     return FileResponse("templates/availability.html")
+
+@app.get("/constraints.html")
+def constraints_page():
+    return FileResponse("templates/constraints.html")
+
+@app.get("/soft-constraints.html")
+def soft_constraints_page():
+    return FileResponse("templates/soft_constraints.html")
+
+@app.get("/generator.html")
+def generator_page():
+    return FileResponse("templates/generator.html")
+
+@app.get("/schedule.html")
+def schedule_page():
+    return FileResponse("templates/schedule.html")
+
+@app.get("/room-fitting.html")
+def room_fitting_page():
+    return FileResponse("templates/room-fitting.html")

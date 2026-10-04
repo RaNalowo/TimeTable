@@ -1,6 +1,6 @@
-const API = "";  // 前后端同源
+const API = "";  // Same origin as backend
 
-// ---------- 存储 ----------
+// ---------- Storage ----------
 function saveToken(token, user) {
   localStorage.setItem("token", token);
   localStorage.setItem("user", JSON.stringify(user));
@@ -15,7 +15,7 @@ function getUser() {
   return u ? JSON.parse(u) : null;
 }
 
-// ---------- 登出 ----------
+// ---------- Logout ----------
 function logout() {
   fetch(API + "/auth/logout", {
     method: "POST",
@@ -27,7 +27,7 @@ function logout() {
   });
 }
 
-// ---------- 登录页 ----------
+// ---------- Login Page ----------
 function initLoginPage() {
   const form = document.getElementById("loginForm");
   if (!form) return;
@@ -61,7 +61,7 @@ function initLoginPage() {
   });
 }
 
-// ---------- 仪表盘 ----------
+// ---------- Dashboard ----------
 async function initDashboard() {
   const cardsEl = document.getElementById("cards");
   if (!cardsEl) return;
@@ -177,7 +177,7 @@ async function initDashboard() {
   }
 }
 
-// ---------- 管理员：加载用户列表 ----------
+// ---------- Admin: Load User List ----------
 async function loadAdminUsers() {
   const box = document.getElementById("adminUsers");
   if (!box) return;
@@ -195,57 +195,12 @@ async function loadAdminUsers() {
   ).join("");
 }
 
-// ---------- 快捷操作占位 ----------
+// ---------- Placeholder Navigation ----------
 function go(page) {
   alert("Navigate to: " + page + " (not implemented yet)");
 }
 
-// ---------- 忘记密码 ----------
-function initForgotPage() {
-  const form = document.getElementById("forgotForm");
-  if (!form) return;
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = document.getElementById("email").value.trim();
-    const msg = document.getElementById("message");
-    msg.textContent = "";
-
-    const res = await fetch(API + "/auth/forgot-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    const data = await res.json();
-    msg.textContent = data.message || "Check your email.";
-  });
-}
-
-// ---------- 重置密码 ----------
-function initResetPage() {
-  const form = document.getElementById("resetForm");
-  if (!form) return;
-
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get("token") || "";
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const new_password = document.getElementById("newPassword").value;
-    const msg = document.getElementById("message");
-    msg.textContent = "";
-
-    const res = await fetch(API + "/auth/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, new_password }),
-    });
-    const data = await res.json();
-    msg.textContent = data.message || data.detail || "Done";
-  });
-}
-
-// ---------- 通用：字段高亮 ----------
+// ---------- Field Highlight ----------
 function highlightField(id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -672,7 +627,7 @@ async function initCoursesPage() {
     if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify curriculum.";
   }
 
-  // 加载学生组到 checkbox 列表
+  // Load student groups into the checkbox list
   try {
     const groupsRes = await fetch(API + "/student-groups", {
       headers: { "Authorization": "Bearer " + token },
@@ -822,7 +777,7 @@ async function editCourse(id) {
   document.getElementById("lab_hours").value = c.lab_hours;
   document.getElementById("department").value = c.department || "";
 
-  // 回填学生组勾选
+  // Re-check the target groups
   document.querySelectorAll(".group-check").forEach(cb => cb.checked = false);
   if (c.target_groups) {
     const selected = c.target_groups.split(",").map(s => s.trim());
@@ -1100,21 +1055,1180 @@ async function viewTeacherAvailability() {
 }
 
 // ============================================================
-// Shared Sidebar (所有页面共用)
+// Hard Constraints (User Story 7)
+// ============================================================
+
+let constraintCache = {};
+let constraintIsAdmin = false;
+
+const ALL_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+async function initConstraintsPage() {
+  const box = document.getElementById("card-no_overlap_rooms");
+  if (!box) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  constraintIsAdmin = me.roles.includes("admin");
+
+  const accessMsg = document.getElementById("accessMsg");
+
+  if (!constraintIsAdmin) {
+    accessMsg.textContent = "Read-only. Only admins can modify hard constraints.";
+    document.querySelectorAll(".switch input").forEach(i => i.disabled = true);
+    document.querySelectorAll("button.btn").forEach(b => b.style.display = "none");
+  }
+
+  // Render day checkboxes for lunch break config
+  const dayChecks = document.getElementById("dayChecks");
+  if (dayChecks) {
+    dayChecks.innerHTML = ALL_DAYS.map(d => `
+      <label>
+        <input type="checkbox" class="day-check" value="${d}" checked />
+        ${d}
+      </label>
+    `).join("");
+  }
+
+  await loadConstraints();
+}
+
+async function loadConstraints() {
+  const res = await fetch(API + "/constraints", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+
+  constraintCache = {};
+  list.forEach(c => { constraintCache[c.constraint_type] = c; });
+
+  for (const type of ["no_overlap_rooms", "no_overlap_teachers", "lunch_break"]) {
+    const c = constraintCache[type];
+    if (!c) continue;
+
+    const toggle = document.getElementById("toggle-" + type);
+    if (toggle) toggle.checked = c.is_active;
+
+    const card = document.getElementById("card-" + type);
+    if (card) card.classList.toggle("active", c.is_active);
+  }
+
+  // Lunch break config
+  const lb = constraintCache["lunch_break"];
+  const lunchConfig = document.getElementById("lunchConfig");
+  if (lb && lunchConfig) {
+    if (lb.is_active) lunchConfig.classList.add("show");
+    else lunchConfig.classList.remove("show");
+
+    const cfg = lb.config || {};
+    if (cfg.start) document.getElementById("lunchStart").value = cfg.start;
+    if (cfg.end) document.getElementById("lunchEnd").value = cfg.end;
+
+    const selectedDays = new Set(cfg.days || ALL_DAYS);
+    document.querySelectorAll(".day-check").forEach(cb => {
+      cb.checked = selectedDays.has(cb.value);
+    });
+  }
+}
+
+async function onToggle(type, value) {
+  if (!constraintIsAdmin) return;
+  const msg = document.getElementById("msg");
+  msg.textContent = "";
+
+  const payload = {
+    is_active: value,
+    config: type === "lunch_break"
+      ? (constraintCache["lunch_break"]?.config || {
+          start: "12:00", end: "13:00", days: ALL_DAYS,
+        })
+      : null,
+  };
+
+  const res = await fetch(API + "/constraints/" + type, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + getToken(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    msg.style.color = "#dc2626";
+    msg.textContent = data.detail || "Failed to save";
+    document.getElementById("toggle-" + type).checked = !value;
+    return;
+  }
+
+  msg.style.color = "#16a34a";
+  msg.textContent = `Constraint '${type}' ${value ? "activated" : "deactivated"}.`;
+
+  constraintCache[type] = data;
+
+  const card = document.getElementById("card-" + type);
+  if (card) card.classList.toggle("active", value);
+
+  if (type === "lunch_break") {
+    const lunchConfig = document.getElementById("lunchConfig");
+    if (lunchConfig) lunchConfig.classList.toggle("show", value);
+  }
+}
+
+async function saveLunchConfig() {
+  const start = document.getElementById("lunchStart").value;
+  const end = document.getElementById("lunchEnd").value;
+  const days = Array.from(document.querySelectorAll(".day-check:checked"))
+    .map(cb => cb.value);
+
+  const msg = document.getElementById("msg");
+  msg.textContent = "";
+
+  const res = await fetch(API + "/constraints/lunch_break", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + getToken(),
+    },
+    body: JSON.stringify({
+      is_active: document.getElementById("toggle-lunch_break").checked,
+      config: { start, end, days },
+    }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    msg.style.color = "#dc2626";
+    msg.textContent = data.detail || "Failed to save lunch break";
+    return;
+  }
+
+  constraintCache["lunch_break"] = data;
+  msg.style.color = "#16a34a";
+  msg.textContent = "Lunch break configuration saved.";
+}
+
+async function runDemoValidation() {
+  const box = document.getElementById("validateBox");
+  box.style.display = "block";
+  box.textContent = "Running...";
+
+  // Two intentionally conflicting entries + one during lunch
+  const entries = [
+    {
+      day: "Mon", time_slot: "08:30-10:00",
+      room_id: 1, room_code: "C102",
+      teacher_id: 1, teacher_name: "Dr. Arman",
+      course_code: "CS201",
+    },
+    {
+      day: "Mon", time_slot: "08:30-10:00",
+      room_id: 1, room_code: "C102",
+      teacher_id: 1, teacher_name: "Dr. Arman",
+      course_code: "CS301",
+    },
+    {
+      day: "Mon", time_slot: "12:00-13:30",
+      room_id: 2, room_code: "G201",
+      teacher_id: 2, teacher_name: "Prof. Dana",
+      course_code: "MATH101",
+    },
+  ];
+
+  const res = await fetch(API + "/constraints/validate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + getToken(),
+    },
+    body: JSON.stringify({ entries }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    box.textContent = "Error: " + (data.detail || "Unknown");
+    return;
+  }
+
+  if (data.valid) {
+    box.innerHTML = `<div class="ok-item">No conflicts detected (${data.checked} entries checked).</div>`;
+    return;
+  }
+
+  box.innerHTML = data.conflicts.map(c => `
+    <div class="conflict-item">
+      <b>[${c.type}]</b> ${c.message}
+    </div>
+  `).join("");
+}
+
+
+// ============================================================
+// Soft Constraints (User Story 8)
+// ============================================================
+
+let softCache = {};
+let softIsAdmin = false;
+
+async function initSoftConstraintsPage() {
+  const listEl = document.getElementById("softList");
+  if (!listEl) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  softIsAdmin = me.roles.includes("admin");
+
+  const accessMsg = document.getElementById("accessMsg");
+  if (!softIsAdmin) {
+    accessMsg.textContent = "Read-only. Only admins can modify soft constraints.";
+    document.querySelectorAll("button.btn").forEach(b => b.style.display = "none");
+  }
+
+  await loadSoftConstraints();
+}
+
+async function loadSoftConstraints() {
+  const listEl = document.getElementById("softList");
+  if (!listEl) return;
+
+  const res = await fetch(API + "/soft-constraints", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    listEl.innerHTML = "Failed to load soft constraints.";
+    return;
+  }
+  const list = await res.json();
+
+  softCache = {};
+  list.forEach(c => { softCache[c.constraint_key] = c; });
+
+  listEl.innerHTML = list.map(c => `
+    <div class="soft-card ${c.is_enabled ? "" : "disabled"}" id="card-${c.constraint_key}">
+      <h3>${c.display_name}</h3>
+      <p>${c.description || ""}</p>
+      <p><code>${c.constraint_key}</code></p>
+
+      <div class="weight-row">
+        <span style="font-size:13px;color:#666;min-width:60px;">Weight</span>
+        <input type="range" min="0" max="10" step="1"
+               id="slider-${c.constraint_key}"
+               value="${c.weight}"
+               oninput="onWeightChange('${c.constraint_key}', this.value)"
+               ${softIsAdmin ? "" : "disabled"} />
+        <span class="weight-value" id="weight-${c.constraint_key}">${c.weight}</span>
+      </div>
+
+      <label class="enable-toggle">
+        <input type="checkbox" id="enabled-${c.constraint_key}"
+               ${c.is_enabled ? "checked" : ""}
+               ${softIsAdmin ? "" : "disabled"} />
+        Enabled
+      </label>
+    </div>
+  `).join("");
+}
+
+function onWeightChange(key, value) {
+  const label = document.getElementById("weight-" + key);
+  if (label) label.textContent = value;
+
+  if (softCache[key]) {
+    softCache[key].weight = parseInt(value, 10);
+  }
+}
+
+async function saveAllWeights() {
+  const msg = document.getElementById("msg");
+  msg.textContent = "";
+
+  let saved = 0;
+  for (const key of Object.keys(softCache)) {
+    const slider = document.getElementById("slider-" + key);
+    const enabled = document.getElementById("enabled-" + key);
+    if (!slider || !enabled) continue;
+
+    const weight = parseInt(slider.value, 10);
+    const is_enabled = enabled.checked;
+
+    // Client-side validation
+    if (isNaN(weight) || weight < 0 || weight > 10) {
+      msg.style.color = "#dc2626";
+      msg.textContent = `Invalid weight for ${key}. Must be 0-10.`;
+      return;
+    }
+
+    const res = await fetch(API + "/soft-constraints/" + key, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify({ weight, is_enabled }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      msg.style.color = "#dc2626";
+      msg.textContent = data.detail || "Failed to save";
+      return;
+    }
+
+    const data = await res.json();
+    softCache[key] = data;
+    saved++;
+  }
+
+  msg.style.color = "#16a34a";
+  msg.textContent = `Saved ${saved} soft constraint(s).`;
+}
+
+async function resetWeights() {
+  if (!confirm("Reset all soft constraints to default weights?")) return;
+
+  const msg = document.getElementById("msg");
+  msg.textContent = "";
+
+  const res = await fetch(API + "/soft-constraints/reset", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    msg.style.color = "#dc2626";
+    msg.textContent = data.detail || "Reset failed";
+    return;
+  }
+
+  msg.style.color = "#16a34a";
+  msg.textContent = "Soft constraints reset to defaults.";
+  loadSoftConstraints();
+}
+
+async function runScorePreview() {
+  const box = document.getElementById("scoreBox");
+  box.style.display = "block";
+  box.innerHTML = "Running...";
+
+  // Sample schedule with known gaps + early morning + late evening
+  const entries = [
+    { day: "Mon", time_slot: "08:30-10:00", course_code: "MATH101", student_group: "CS-2301" },
+    { day: "Mon", time_slot: "12:00-13:30", course_code: "CS201",   student_group: "CS-2301" },
+    { day: "Mon", time_slot: "17:00-18:30", course_code: "CS102",   student_group: "CS-2301" },
+    { day: "Tue", time_slot: "08:30-10:00", course_code: "PHYS101", student_group: "CS-2302" },
+    { day: "Wed", time_slot: "10:15-11:45", course_code: "CS301",   student_group: "CS-2302" },
+  ];
+
+  const res = await fetch(API + "/soft-constraints/score", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + getToken(),
+    },
+    body: JSON.stringify({ entries }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    box.textContent = "Error: " + (data.detail || "Unknown");
+    return;
+  }
+
+  const scoreClass = data.total_score >= 70 ? "" :
+                     data.total_score >= 40 ? "mid" : "low";
+
+  const breakdownHTML = data.breakdown.length === 0
+    ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
+    : data.breakdown.map(b => `
+        <div class="breakdown-item">
+          <span class="name">${b.display_name}</span>
+          <span class="pill">weight ${b.weight}</span>
+          <span class="pill">raw ${b.raw_penalty}</span>
+          <span class="penalty">-${b.weighted_penalty}</span>
+        </div>
+      `).join("");
+
+  box.innerHTML = `
+    <div class="score-header">
+      <span class="score-number ${scoreClass}">${data.total_score}</span>
+      <span class="score-label">/ 100 &nbsp; · &nbsp; ${data.checked_entries} entries evaluated</span>
+    </div>
+    <div class="score-bar">
+      <div style="width: ${data.total_score}%"></div>
+    </div>
+    ${breakdownHTML}
+  `;
+}
+
+
+// ============================================================
+// AI Timetable Generator (User Story 9)
+// ============================================================
+
+async function initGeneratorPage() {
+  const btn = document.getElementById("generateBtn");
+  if (!btn) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  const isAdmin = me.roles.includes("admin");
+
+  if (!isAdmin) {
+    btn.disabled = true;
+    btn.textContent = "Admin only";
+    return;
+  }
+
+  // Load any previously generated entries
+  loadExistingEntries();
+}
+
+async function loadExistingEntries() {
+  const res = await fetch(API + "/generator/entries", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const entries = await res.json();
+  if (entries.length === 0) return;
+  renderEntries(entries);
+  document.getElementById("entriesPanel").style.display = "block";
+}
+
+async function runGeneration() {
+  const btn = document.getElementById("generateBtn");
+  const progressWrap = document.getElementById("progressWrap");
+  const progressFill = document.getElementById("progressFill");
+  const progressText = document.getElementById("progressText");
+  const statusBanner = document.getElementById("statusBanner");
+
+  btn.disabled = true;
+  statusBanner.style.display = "none";
+  progressWrap.style.display = "block";
+  progressFill.style.width = "0%";
+  progressText.textContent = "Starting generator...";
+
+  // Animated progress while waiting for the response
+  let pct = 0;
+  const timer = setInterval(() => {
+    pct = Math.min(pct + 5, 90);
+    progressFill.style.width = pct + "%";
+    progressText.textContent = `Generating... ${pct}%`;
+  }, 200);
+
+  try {
+    const res = await fetch(API + "/generator/generate", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + getToken() },
+    });
+    const data = await res.json();
+
+    clearInterval(timer);
+
+    if (!res.ok) {
+      progressFill.style.width = "100%";
+      progressFill.style.background = "#dc2626";
+      progressText.textContent = "Failed.";
+      showStatusBanner("error", data.detail || "Generation failed");
+      btn.disabled = false;
+      return;
+    }
+
+    progressFill.style.width = "100%";
+    progressFill.style.background = "#16a34a";
+    progressText.textContent = `Done in ${data.elapsed_seconds}s`;
+
+    const msg = data.status === "success"
+      ? `Generated ${data.placed_count} class sessions with zero hard-constraint violations.`
+      : `Generated ${data.placed_count} sessions, but ${data.failed_count} could not be placed.`;
+    showStatusBanner(data.status, msg);
+
+    renderScore(data);
+    renderLog(data.log);
+    renderEntries(data.entries);
+    renderFailed(data.failed_sessions);
+  } catch (e) {
+    clearInterval(timer);
+    progressFill.style.width = "100%";
+    progressFill.style.background = "#dc2626";
+    progressText.textContent = "Network error";
+    showStatusBanner("error", "Network error");
+  }
+
+  btn.disabled = false;
+}
+
+function showStatusBanner(type, text) {
+  const el = document.getElementById("statusBanner");
+  el.className = type;
+  el.textContent = text;
+  el.style.display = "block";
+}
+
+function renderScore(data) {
+  const panel = document.getElementById("scorePanel");
+  const box = document.getElementById("scoreBox");
+  panel.style.display = "block";
+
+  const score = data.score;
+  const scoreClass = score >= 70 ? "" : score >= 40 ? "mid" : "low";
+
+  const breakdownHTML = data.score_breakdown.length === 0
+    ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
+    : data.score_breakdown.map(b => `
+        <div class="breakdown-item">
+          <span>${b.display_name}</span>
+          <span class="pill">weight ${b.weight}</span>
+          <span class="pill">raw ${b.raw_penalty}</span>
+          <span class="penalty">-${b.weighted_penalty}</span>
+        </div>
+      `).join("");
+
+  box.innerHTML = `
+    <div class="score-header">
+      <span class="score-number ${scoreClass}">${score}</span>
+      <span class="score-label">/ 100 · ${data.placed_count} sessions placed</span>
+    </div>
+    <div class="score-bar"><div style="width: ${score}%"></div></div>
+    ${breakdownHTML}
+  `;
+}
+
+function renderLog(lines) {
+  const panel = document.getElementById("logPanel");
+  const box = document.getElementById("logBox");
+  panel.style.display = "block";
+
+  box.innerHTML = lines.map(l => {
+    if (l.startsWith("[OK]"))   return `<div class="ok">${l}</div>`;
+    if (l.startsWith("[FAIL]")) return `<div class="fail">${l}</div>`;
+    return `<div>${l}</div>`;
+  }).join("");
+}
+
+function renderEntries(entries) {
+  const panel = document.getElementById("entriesPanel");
+  const tbody = document.getElementById("entriesBody");
+  panel.style.display = "block";
+
+  tbody.innerHTML = entries.map(e => `
+    <tr>
+      <td>${e.day}</td>
+      <td>${e.time_slot}</td>
+      <td><b>${e.course_code}</b></td>
+      <td><span class="badge">${e.session_type}</span></td>
+      <td>${e.room_code}</td>
+      <td>${e.teacher_name}</td>
+      <td>${e.target_groups}</td>
+    </tr>
+  `).join("");
+}
+
+function renderFailed(failed) {
+  const box = document.getElementById("failedBox");
+  if (!failed || failed.length === 0) {
+    box.style.display = "none";
+    return;
+  }
+  box.style.display = "block";
+  box.innerHTML = `
+    <b>${failed.length} session(s) could not be placed:</b>
+    <ul style="margin:6px 0 0 20px;">
+      ${failed.map(f => `<li>${f.course_code} (${f.session_type})</li>`).join("")}
+    </ul>
+  `;
+}
+
+
+// ============================================================
+// Real-Time Conflict Detection (User Story 10)
+// ============================================================
+
+let scheduleData = { days: [], time_slots: [], cells: [], conflicts: [] };
+let roomsCache = [];
+let currentMoveEntry = null;
+let scheduleIsAdmin = false;
+let draggingEntryId = null;
+let pendingSwap = null;
+
+async function initSchedulePage() {
+  const gridTable = document.getElementById("gridTable");
+  if (!gridTable) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  scheduleIsAdmin = me.roles.includes("admin");
+
+  // Load rooms for the move modal
+  const roomsRes = await fetch(API + "/rooms", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (roomsRes.ok) {
+    roomsCache = await roomsRes.json();
+  }
+
+  // Populate move modal dropdowns
+  const daySel = document.getElementById("moveDay");
+  const slotSel = document.getElementById("moveSlot");
+  daySel.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    .map(d => `<option value="${d}">${d}</option>`).join("");
+  slotSel.innerHTML = [
+    "08:30-10:00",
+    "10:15-11:45",
+    "12:00-13:30",
+    "13:30-15:00",
+    "15:15-16:45",
+    "17:00-18:30",
+  ].map(s => `<option value="${s}">${s}</option>`).join("");
+  document.getElementById("moveRoom").innerHTML = roomsCache
+    .map(r => `<option value="${r.id}">${r.building} · ${r.room_code} (cap ${r.capacity})</option>`)
+    .join("");
+
+  await refreshGrid();
+}
+
+async function refreshGrid() {
+  const res = await fetch(API + "/conflicts/grid", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    console.error("Failed to load grid");
+    return;
+  }
+  scheduleData = await res.json();
+  renderGrid();
+  renderConflicts();
+  updateBanner();
+}
+
+async function rescanConflicts() {
+  await refreshGrid();
+}
+
+function renderGrid() {
+  const table = document.getElementById("gridTable");
+  const { days, time_slots, cells } = scheduleData;
+
+  let html = "<thead><tr><th>Time</th>";
+  days.forEach(d => html += `<th>${d}</th>`);
+  html += "</tr></thead><tbody>";
+
+  time_slots.forEach(slot => {
+    html += `<tr><td class="slot-label">${slot}</td>`;
+    days.forEach(day => {
+      const cell = cells.find(c => c.day === day && c.time_slot === slot);
+      const entries = cell ? cell.entries : [];
+
+      html += `<td data-day="${day}" data-slot="${slot}"
+             ondragover="onCellDragOver(event, '${day}', '${slot}')"
+             ondragleave="onCellDragLeave(event)"
+             ondrop="onCellDrop(event, '${day}', '${slot}')">`;
+      if (entries.length === 0) {
+        html += `<span style="color:#d1d5db;font-size:11px;">—</span>`;
+      } else {
+        entries.forEach(e => {
+              const cls = e.has_conflict ? "conflict-error" : "";
+              html += `
+                <div class="entry-card ${cls}"
+                     draggable="true"
+                     ondragstart="onDragStart(event, ${e.id})"
+                     ondragend="onDragEnd(event)"
+                     onclick="openMoveModal(${e.id}, '${e.course_code}', '${day}', '${slot}')"
+                     onmouseenter="showEntryTooltip(event, ${e.id})"
+                     onmouseleave="hideTooltip()">
+                  <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
+                  <div class="course">${e.course_code} <span class="type">${e.session_type}</span></div>
+                  <div class="meta">${e.room_code} · ${e.teacher_name || "-"}</div>
+                </div>
+              `;
+            });
+      }
+      html += `</td>`;
+    });
+    html += "</tr>";
+  });
+  html += "</tbody>";
+
+  table.innerHTML = html;
+
+  // Summary text
+  const errors = scheduleData.error_count || 0;
+  const warnings = scheduleData.warning_count || 0;
+  const total = scheduleData.total_entries || 0;
+  document.getElementById("summaryText").textContent =
+    `${total} sessions · ${errors} error(s) · ${warnings} warning(s)`;
+}
+
+function updateBanner() {
+  const banner = document.getElementById("alertBanner");
+  const errors = scheduleData.error_count || 0;
+  const warnings = scheduleData.warning_count || 0;
+
+  if (errors > 0) {
+    banner.className = "show error";
+    banner.innerHTML = `<span class="count">${errors}</span>
+      <span>hard-constraint conflict(s) detected. Click any red session for details.</span>`;
+  } else if (warnings > 0) {
+    banner.className = "show warning";
+    banner.innerHTML = `<span class="count">${warnings}</span>
+      <span>capacity warning(s) detected. The schedule is valid but some rooms may be too small.</span>`;
+  } else {
+    banner.className = "show success";
+    banner.innerHTML = `No conflicts. The schedule satisfies all hard constraints.`;
+  }
+}
+
+function renderConflicts() {
+  const box = document.getElementById("conflictList");
+  const conflicts = scheduleData.conflicts || [];
+
+  if (conflicts.length === 0) {
+    box.innerHTML = `<p style="font-size:13px;color:#888;">No conflicts detected.</p>`;
+    return;
+  }
+
+  box.innerHTML = conflicts.map(c => `
+    <div class="conflict-item ${c.severity}">
+      <b>${c.message}</b>
+      ${
+        c.details.courses
+          ? `Courses involved: ${c.details.courses.join(", ")}`
+          : c.details.course
+          ? `Course: ${c.details.course}`
+          : ""
+      }
+      ${c.details.excess ? ` · Over capacity by ${c.details.excess} students` : ""}
+    </div>
+  `).join("");
+}
+
+// ---------- Tooltip ----------
+function showEntryTooltip(evt, entryId) {
+  const tt = document.getElementById("tooltip");
+
+  const cell = scheduleData.cells.find(c =>
+    c.entries.some(e => e.id === entryId)
+  );
+  if (!cell) return;
+  const entry = cell.entries.find(e => e.id === entryId);
+
+  const conflicts = (scheduleData.conflicts || []).filter(c =>
+    c.entry_ids.includes(entryId)
+  );
+
+  let html = `
+    <div class="tt-title">${entry.course_code} · ${entry.session_type}</div>
+    <div class="tt-row"><span class="tt-label">Room</span>${entry.room_code}</div>
+    <div class="tt-row"><span class="tt-label">Teacher</span>${entry.teacher_name || "-"}</div>
+    <div class="tt-row"><span class="tt-label">Groups</span>${entry.target_groups || "-"}</div>
+  `;
+
+  if (conflicts.length > 0) {
+    html += `<div class="tt-row" style="margin-top:8px;border-top:1px solid #374151;padding-top:6px;">`;
+    conflicts.forEach(c => {
+      html += `<div style="color:#fca5a5;">⚠ ${c.message}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  tt.innerHTML = html;
+  tt.style.display = "block";
+  moveTooltip(evt);
+}
+
+function moveTooltip(evt) {
+  const tt = document.getElementById("tooltip");
+  const padding = 14;
+  let x = evt.clientX + padding;
+  let y = evt.clientY + padding;
+
+  const rect = tt.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 8) {
+    x = evt.clientX - rect.width - padding;
+  }
+  if (y + rect.height > window.innerHeight - 8) {
+    y = evt.clientY - rect.height - padding;
+  }
+
+  tt.style.left = x + "px";
+  tt.style.top = y + "px";
+}
+
+function hideTooltip() {
+  document.getElementById("tooltip").style.display = "none";
+}
+
+// ---------- Move modal ----------
+function openMoveModal(entryId, courseCode, day, slot) {
+  if (!scheduleIsAdmin) return;
+
+  currentMoveEntry = entryId;
+  document.getElementById("moveEntryLabel").textContent =
+    `${courseCode} (entry #${entryId})`;
+  document.getElementById("moveDay").value = day;
+  document.getElementById("moveSlot").value = slot;
+  document.getElementById("moveModal").classList.add("open");
+}
+
+function closeMoveModal() {
+  currentMoveEntry = null;
+  document.getElementById("moveModal").classList.remove("open");
+}
+
+async function submitMove() {
+  if (!currentMoveEntry) return;
+
+  const day = document.getElementById("moveDay").value;
+  const time_slot = document.getElementById("moveSlot").value;
+  const room_id = parseInt(document.getElementById("moveRoom").value, 10);
+
+  const res = await fetch(API + "/conflicts/entries/" + currentMoveEntry, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + getToken(),
+    },
+    body: JSON.stringify({ day, time_slot, room_id }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.detail || "Move failed");
+    return;
+  }
+
+  closeMoveModal();
+  await refreshGrid();   // ← real-time re-scan
+}
+
+// ============================================================
+// Interactive Drag-and-Drop Grid (User Story 11)
+// ============================================================
+
+function onDragStart(evt, entryId) {
+  if (!scheduleIsAdmin) {
+    evt.preventDefault();
+    return;
+  }
+  draggingEntryId = entryId;
+  evt.dataTransfer.effectAllowed = "move";
+  evt.dataTransfer.setData("text/plain", String(entryId));
+  evt.currentTarget.classList.add("dragging");
+}
+
+function onDragEnd(evt) {
+  evt.currentTarget.classList.remove("dragging");
+  document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid")
+    .forEach(td => td.classList.remove(
+      "drop-target", "drop-target-occupied", "drop-invalid"
+    ));
+  draggingEntryId = null;
+}
+
+function onCellDragOver(evt, day, slot) {
+  if (!draggingEntryId) return;
+  evt.preventDefault();
+
+  const td = evt.currentTarget;
+  document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid")
+    .forEach(el => el.classList.remove(
+      "drop-target", "drop-target-occupied", "drop-invalid"
+    ));
+
+  const cell = scheduleData.cells.find(c => c.day === day && c.time_slot === slot);
+  const occupied = cell && cell.entries && cell.entries.length > 0;
+
+  if (occupied) {
+    td.classList.add("drop-target-occupied");
+  } else {
+    td.classList.add("drop-target");
+  }
+  evt.dataTransfer.dropEffect = "move";
+}
+
+function onCellDragLeave(evt) {
+  evt.currentTarget.classList.remove(
+    "drop-target", "drop-target-occupied", "drop-invalid"
+  );
+}
+
+async function onCellDrop(evt, day, slot) {
+  evt.preventDefault();
+  const draggedId = draggingEntryId;
+  if (!draggedId) return;
+
+  const td = evt.currentTarget;
+  td.classList.remove("drop-target", "drop-target-occupied", "drop-invalid");
+
+  const cell = scheduleData.cells.find(c => c.day === day && c.time_slot === slot);
+  const entries = (cell && cell.entries) || [];
+
+  if (entries.some(e => e.id === draggedId)) return;
+
+  if (entries.length === 0) {
+    await moveEntryToSlot(draggedId, day, slot);
+  } else {
+    const targetId = entries[0].id;
+    openSwapModal(draggedId, targetId, entries[0].course_code, day, slot);
+  }
+}
+
+async function moveEntryToSlot(entryId, day, time_slot) {
+  try {
+    const res = await fetch(API + "/conflicts/entries/" + entryId, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify({ day, time_slot }),
+    });
+
+    if (!res.ok) throw new Error("Move failed");
+
+    await refreshGrid();
+  } catch (err) {
+    alert("Failed to save change. The card has been reverted.");
+    await refreshGrid();
+  }
+}
+
+function openSwapModal(draggedId, targetId, targetCourse, targetDay, targetSlot) {
+  pendingSwap = { draggedId, targetId };
+
+  const draggedCell = scheduleData.cells.find(c =>
+    c.entries.some(e => e.id === draggedId));
+  const draggedEntry = draggedCell.entries.find(e => e.id === draggedId);
+
+  document.getElementById("swapLineA").innerHTML =
+    `<b>${draggedEntry.course_code}</b> — ${draggedCell.day} ${draggedCell.time_slot} · Room ${draggedEntry.room_code}`;
+  document.getElementById("swapLineB").innerHTML =
+    `<b>${targetCourse}</b> — ${targetDay} ${targetSlot} · Room ${scheduleData.cells.find(c => c.entries.some(e => e.id === targetId)).entries.find(e => e.id === targetId).room_code}`;
+
+  document.getElementById("swapModal").classList.add("open");
+}
+
+function closeSwapModal() {
+  pendingSwap = null;
+  document.getElementById("swapModal").classList.remove("open");
+}
+
+async function confirmSwap() {
+  if (!pendingSwap) return;
+
+  try {
+    const res = await fetch(API + "/conflicts/swap", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify({
+        entry_id_a: pendingSwap.draggedId,
+        entry_id_b: pendingSwap.targetId,
+      }),
+    });
+
+    if (!res.ok) throw new Error("Swap failed");
+
+    closeSwapModal();
+    await refreshGrid();
+  } catch (err) {
+    alert("Swap failed. The cards have been reverted.");
+    closeSwapModal();
+    await refreshGrid();
+  }
+}
+
+
+// ============================================================
+// Smart Room Auto-Fitting (User Story 12)
+// ============================================================
+
+async function initRoomFittingPage() {
+  const form = document.getElementById("fitForm");
+  if (!form) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  // Load student groups into checkboxes
+  const groupsRes = await fetch(API + "/student-groups", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (groupsRes.ok) {
+    const groups = await groupsRes.json();
+    const box = document.getElementById("groupsBox");
+    groups.forEach(g => {
+      const lbl = document.createElement("label");
+      lbl.innerHTML = `
+        <input type="checkbox" class="fit-group-check" value="${g.group_code}" />
+        ${g.group_code} <span style="color:#888;">(${g.student_count})</span>
+      `;
+      box.appendChild(lbl);
+    });
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const session_type = document.getElementById("sessionType").value;
+    const course_code = document.getElementById("courseCode").value.trim() || null;
+    const target_groups = Array.from(document.querySelectorAll(".fit-group-check:checked"))
+      .map(cb => cb.value);
+
+    if (target_groups.length === 0) {
+      alert("Select at least one student group.");
+      return;
+    }
+
+    const res = await fetch(API + "/room-fitting/suggest", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify({ session_type, target_groups, course_code }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      alert(data.detail || "Failed");
+      return;
+    }
+
+    renderFitResults(data);
+  });
+}
+
+function renderFitResults(data) {
+  const panel = document.getElementById("resultPanel");
+  const summary = document.getElementById("summary");
+  const tbody = document.getElementById("resultBody");
+
+  panel.style.display = "block";
+
+  summary.innerHTML = `
+    Session type: <b>${data.session_type}</b> ·
+    Target groups: <b>${data.target_groups.join(", ")}</b> ·
+    Total students: <b>${data.required_seats}</b>
+    <br/>
+    Required room types: <b>${data.required_room_types.join(" / ") || "any"}</b> ·
+    Required equipment: <b>${data.required_equipment.join(", ") || "none"}</b>
+  `;
+
+  const bestId = data.candidates.length ? data.candidates[0].room_id : null;
+
+  tbody.innerHTML = data.candidates.map(c => {
+    const checks = [];
+    if (c.capacity_ok) checks.push(`<span class="badge ok">capacity OK</span>`);
+    else checks.push(`<span class="badge fail">overflow +${data.required_seats - c.capacity}</span>`);
+
+    if (c.type_ok) checks.push(`<span class="badge ok">type OK</span>`);
+    else checks.push(`<span class="badge fail">type mismatch</span>`);
+
+    if (c.gear_ok) checks.push(`<span class="badge ok">gear OK</span>`);
+    else checks.push(`<span class="badge fail">missing: ${c.missing_gear.join(", ")}</span>`);
+
+    const rowClass = c.room_id === bestId ? "best" : (c.score < 0 ? "fail" : "");
+    const scoreClass = c.score < 0 ? "negative" : "";
+
+    return `
+      <tr class="${rowClass}">
+        <td><b>${c.room_code}</b></td>
+        <td>${c.building}</td>
+        <td><span class="badge info">${c.room_type}</span></td>
+        <td>${c.capacity} ${c.excess_seats > 0 ? `<span style="color:#888;">(+${c.excess_seats})</span>` : ""}</td>
+        <td>${c.equipment || "-"}</td>
+        <td>${checks.join(" ")}</td>
+        <td class="score-cell ${scoreClass}">${c.score}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+
+// ============================================================
+// Shared Sidebar
 // ============================================================
 
 const SIDEBAR_ITEMS = [
-  { href: "/dashboard.html",   label: "Dashboard" },
-  { href: "/rooms.html",       label: "Manage Rooms" },
-  { href: "/teachers.html",    label: "Manage Faculty" },
-  { href: "/courses.html",     label: "Manage Curriculum" },
-  { href: "/availability.html", label: "My Availability" },
+  // All roles
+  { href: "/dashboard.html",        label: "Dashboard",         roles: ["admin", "teacher", "student"] },
+  { href: "/schedule.html",         label: "Schedule Grid",     roles: ["admin", "teacher", "student"] },
+  { href: "/availability.html",     label: "My Availability",   roles: ["admin", "teacher"] },
+
+  // Admin only
+  { href: "/rooms.html",            label: "Manage Rooms",      roles: ["admin"] },
+  { href: "/teachers.html",         label: "Manage Faculty",    roles: ["admin"] },
+  { href: "/courses.html",          label: "Manage Curriculum", roles: ["admin"] },
+  { href: "/constraints.html",      label: "Hard Constraints",  roles: ["admin"] },
+  { href: "/soft-constraints.html", label: "Soft Constraints",  roles: ["admin"] },
+  { href: "/generator.html",        label: "AI Generator",      roles: ["admin"] },
+  { href: "/room-fitting.html",     label: "Room Fitting",      roles: ["admin"] },
 ];
 
 const SIDEBAR_ACTIONS = [
-  { action: "timetable", label: "View Timetable" },
-  { action: "export",    label: "Export" },
-  { action: "requests",  label: "Requests" },
+  { action: "timetable", label: "View Timetable", roles: ["admin", "teacher", "student"] },
+  { action: "export",    label: "Export",         roles: ["admin", "teacher"] },
+  { action: "requests",  label: "Requests",       roles: ["admin"] },
 ];
 
 const SIDEBAR_CSS = `
@@ -1155,11 +2269,9 @@ const SIDEBAR_CSS = `
 `;
 
 function renderSidebar() {
-  // 只在有 sidebar-mount 的页面渲染
   const mount = document.getElementById("sidebar-mount");
   if (!mount) return;
 
-  // 注入 CSS（只注入一次）
   if (!document.getElementById("sidebar-style")) {
     const style = document.createElement("style");
     style.id = "sidebar-style";
@@ -1167,15 +2279,27 @@ function renderSidebar() {
     document.head.appendChild(style);
   }
 
+  const user = getUser();
+  const userRoles = (user && user.roles) ? user.roles : [];
+
+  const hasRole = (item) => {
+    if (!item.roles) return true;
+    return item.roles.some(r => userRoles.includes(r));
+  };
+
+  const visibleItems = SIDEBAR_ITEMS.filter(hasRole);
+
   const current = window.location.pathname;
 
-  const navHTML = SIDEBAR_ITEMS.map(item => {
+  const navHTML = visibleItems.map(item => {
     const isActive = current === item.href;
     return `<button class="${isActive ? "active" : ""}"
              onclick="window.location.href='${item.href}'">${item.label}</button>`;
   }).join("");
 
-  const actionsHTML = SIDEBAR_ACTIONS.map(a =>
+  const visibleActions = SIDEBAR_ACTIONS.filter(hasRole);
+
+  const actionsHTML = visibleActions.map(a =>
     `<button onclick="go('${a.action}')">${a.label}</button>`
   ).join("");
 
@@ -1190,15 +2314,18 @@ function renderSidebar() {
   `;
 }
 
-// ---------- 页面初始化 ----------
+// ---------- Page Initialization ----------
 document.addEventListener("DOMContentLoaded", () => {
   renderSidebar();
   initLoginPage();
   initDashboard();
-  initForgotPage();
-  initResetPage();
   initRoomsPage();
   initTeachersPage();
   initCoursesPage();
   initAvailabilityPage();
+  initConstraintsPage();
+  initSoftConstraintsPage();
+  initGeneratorPage();
+  initSchedulePage();
+  initRoomFittingPage();
 });

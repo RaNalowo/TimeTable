@@ -1,4 +1,5 @@
 import os
+import json
 
 from db.database import Base, engine, SessionLocal
 from db.models import User, Role, Room
@@ -8,14 +9,14 @@ Base.metadata.create_all(bind=engine)
 
 db = SessionLocal()
 
-# 1. 角色
+# 1. Roles
 for name in ["student", "teacher", "admin"]:
     if not db.query(Role).filter_by(name=name).first():
         db.add(Role(name=name, description=f"{name} role"))
 db.commit()
 
 
-# 2. 从 users.txt 读取初始用户
+# 2. Load initial users from users.txt
 def load_users_from_file(path="users.txt"):
     if not os.path.exists(path):
         print(f"{path} not found, skipping user import")
@@ -62,7 +63,7 @@ def load_users_from_file(path="users.txt"):
             print(f"Created: {email} ({role_name})")
 
 
-# 3. 房间初始数据
+# 3. Seed rooms
 def seed_rooms():
     if db.query(Room).count() > 0:
         print("Rooms already exist, skipping")
@@ -84,6 +85,8 @@ def seed_rooms():
     db.commit()
     print(f"Seeded {len(samples)} rooms")
 
+
+# 4. Seed teachers
 def seed_teachers():
     from db.models import Teacher
     if db.query(Teacher).count() > 0:
@@ -108,6 +111,8 @@ def seed_teachers():
     db.commit()
     print(f"Seeded {len(samples)} teachers")
 
+
+# 5. Seed student groups
 def seed_student_groups():
     from db.models import StudentGroup
     if db.query(StudentGroup).count() > 0:
@@ -125,6 +130,8 @@ def seed_student_groups():
     db.commit()
     print(f"Seeded {len(samples)} student groups")
 
+
+# 6. Seed courses
 def seed_courses():
     from db.models import Course
     if db.query(Course).count() > 0:
@@ -153,6 +160,8 @@ def seed_courses():
     db.commit()
     print(f"Seeded {len(samples)} courses")
 
+
+# 7. Seed preference window (User Story 6)
 def seed_preference_window():
     from db.models import PreferenceWindow
     if db.query(PreferenceWindow).count() > 0:
@@ -163,11 +172,76 @@ def seed_preference_window():
     print("Seeded preference window (open)")
 
 
+# 8. Seed hard constraints (User Story 7)
+def seed_constraints():
+    from db.models import Constraint
+
+    defaults = {
+        "no_overlap_rooms":    (True,  None),
+        "no_overlap_teachers": (True,  None),
+        "lunch_break":         (False, {
+            "start": "12:00",
+            "end": "13:00",
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+        }),
+    }
+
+    for ctype, (is_active, cfg) in defaults.items():
+        if not db.query(Constraint).filter_by(constraint_type=ctype).first():
+            db.add(Constraint(
+                constraint_type=ctype,
+                is_active=is_active,
+                config_json=json.dumps(cfg) if cfg else None,
+            ))
+    db.commit()
+    print("Seeded default hard constraints")
+
+
+# 9. Seed soft constraints (User Story 8)
+def seed_soft_constraints():
+    from db.models import SoftConstraint
+
+    defaults = {
+        "minimize_gaps": (
+            "Minimize Gaps",
+            "Reduce idle time between classes for student groups.",
+        ),
+        "avoid_early_mornings": (
+            "Avoid Early Mornings",
+            "Penalize 08:30 class slots.",
+        ),
+        "avoid_late_evenings": (
+            "Avoid Late Evenings",
+            "Penalize 17:00 class slots.",
+        ),
+        "compact_days": (
+            "Compact Days",
+            "Prefer fewer days with more classes over spread-out schedules.",
+        ),
+    }
+
+    for key, (name, desc) in defaults.items():
+        if not db.query(SoftConstraint).filter_by(constraint_key=key).first():
+            db.add(SoftConstraint(
+                constraint_key=key,
+                display_name=name,
+                description=desc,
+                weight=5,
+                is_enabled=True,
+            ))
+    db.commit()
+    print("Seeded default soft constraints")
+
+
+# ---------- Run all seeders ----------
 load_users_from_file()
 seed_rooms()
 seed_teachers()
 seed_student_groups()
 seed_courses()
 seed_preference_window()
+seed_constraints()
+seed_soft_constraints()
+
 db.close()
 print("Done.")

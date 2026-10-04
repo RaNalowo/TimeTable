@@ -125,6 +125,42 @@ class StudentGroup(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     group_code = Column(String, unique=True, nullable=False, index=True)  # 如 CS-2301
-    program = Column(String, nullable=True)      # 专业
-    year = Column(Integer, nullable=True)        # 年级
-    student_count = Column(Integer, default=0)   # 学生人数
+    program = Column(String, nullable=True)
+    year = Column(Integer, nullable=True)
+    student_count = Column(Integer, default=0)
+
+class Constraint(Base):
+    __tablename__ = "constraints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    constraint_type = Column(String, unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, default=True)
+    config_json = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class SoftConstraint(Base):
+    __tablename__ = "soft_constraints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    constraint_key = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    weight = Column(Integer, default=5)          # 0-10
+    is_enabled = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ScheduleEntry(Base):
+    __tablename__ = "schedule_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    day = Column(String, nullable=False)
+    time_slot = Column(String, nullable=False)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
+    course_code = Column(String, nullable=True)
+    session_type = Column(String, nullable=True)   # lecture / practice / lab
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    room_code = Column(String, nullable=True)
+    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
+    teacher_name = Column(String, nullable=True)
+    target_groups = Column(String, nullable=True)   # 逗号分隔
+    created_at = Column(DateTime, default=datetime.utcnow)

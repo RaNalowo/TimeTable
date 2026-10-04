@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Hard Constraints</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
+
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #fff; padding: 16px 24px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+
+    .panel {
+      background: #fff; padding: 20px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+    }
+    .panel h2 { margin-top: 0; font-size: 16px; }
+
+    .constraint-card {
+      border: 1px solid #e5e7eb; border-radius: 10px;
+      padding: 16px; margin-bottom: 12px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 16px;
+    }
+    .constraint-card.active {
+      border-color: #2563eb; background: #f0f6ff;
+    }
+    .constraint-info { flex: 1; }
+    .constraint-info h3 { margin: 0 0 6px; font-size: 15px; }
+    .constraint-info p { margin: 4px 0; font-size: 13px; color: #555; }
+    .constraint-info code {
+      background: #f3f4f6; padding: 2px 6px; border-radius: 4px;
+      font-size: 12px; color: #374151;
+    }
+
+    /* Toggle switch */
+    .switch {
+      position: relative; display: inline-block;
+      width: 46px; height: 24px; flex-shrink: 0;
+    }
+    .switch input { display: none; }
+    .slider {
+      position: absolute; cursor: pointer;
+      inset: 0; background-color: #ccc;
+      transition: .2s; border-radius: 24px;
+    }
+    .slider:before {
+      content: ""; position: absolute;
+      height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background: white; transition: .2s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #2563eb; }
+    input:checked + .slider:before { transform: translateX(22px); }
+
+    /* Lunch break config */
+    #lunchConfig {
+      margin-top: 12px; padding-top: 12px; border-top: 1px dashed #ddd;
+      display: none;
+    }
+    #lunchConfig.show { display: block; }
+    #lunchConfig label {
+      font-size: 13px; margin-right: 8px; color: #555;
+    }
+    #lunchConfig input[type="time"] {
+      padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 13px; margin-right: 16px;
+    }
+    .day-checks { margin-top: 8px; }
+    .day-checks label {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-right: 12px; font-size: 13px;
+    }
+
+    #msg { font-size: 13px; min-height: 18px; margin-top: 12px; }
+
+    /* Validation demo */
+    #validateBox {
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 12px; font-family: monospace; font-size: 12px;
+      white-space: pre-wrap; max-height: 300px; overflow-y: auto;
+    }
+    .conflict-item {
+      padding: 8px; margin-bottom: 6px; border-radius: 6px;
+      background: #fee2e2; color: #991b1b; border-left: 3px solid #dc2626;
+    }
+    .ok-item {
+      padding: 8px; border-radius: 6px;
+      background: #dcfce7; color: #166534; border-left: 3px solid #16a34a;
+    }
+
+    button.btn {
+      padding: 8px 14px; background: #2563eb; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    button.btn:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
+
+      <header>
+        <h1>Hard Constraints</h1>
+      </header>
+
+      <div class="panel">
+        <h2>Constraint Configuration</h2>
+        <p style="font-size:13px;color:#888;" id="accessMsg"></p>
+
+        <!-- No overlap rooms -->
+        <div class="constraint-card" id="card-no_overlap_rooms">
+          <div class="constraint-info">
+            <h3>No Overlapping Rooms</h3>
+            <p>Two classes cannot be scheduled in the same room at the same time.</p>
+            <p><code>no_overlap_rooms</code></p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-no_overlap_rooms"
+                   onchange="onToggle('no_overlap_rooms', this.checked)" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- No overlap teachers -->
+        <div class="constraint-card" id="card-no_overlap_teachers">
+          <div class="constraint-info">
+            <h3>No Overlapping Teachers</h3>
+            <p>A teacher cannot teach two classes at the same time.</p>
+            <p><code>no_overlap_teachers</code></p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-no_overlap_teachers"
+                   onchange="onToggle('no_overlap_teachers', this.checked)" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Mandatory lunch break -->
+        <div class="constraint-card" id="card-lunch_break">
+          <div class="constraint-info" style="flex:1;">
+            <h3>Mandatory Lunch Break</h3>
+            <p>Block a fixed time window every day across all cohorts.</p>
+            <p><code>lunch_break</code></p>
+
+            <div id="lunchConfig">
+              <label>From</label>
+              <input type="time" id="lunchStart" value="12:00" />
+              <label>To</label>
+              <input type="time" id="lunchEnd" value="13:00" />
+              <div class="day-checks" id="dayChecks"></div>
+              <button class="btn" style="margin-top:10px;"
+                      onclick="saveLunchConfig()">Save Lunch Break</button>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-lunch_break"
+                   onchange="onToggle('lunch_break', this.checked)" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <p id="msg"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Validation Demo</h2>
+        <p style="font-size:13px;color:#666;">
+          Tests the enforcement logic against the currently active constraints.
+          Click the button to submit two conflicting entries to the validator.
+        </p>
+        <button class="btn" onclick="runDemoValidation()">Run Demo Validation</button>
+        <div id="validateBox" style="margin-top:12px; display:none;"></div>
+      </div>
+
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

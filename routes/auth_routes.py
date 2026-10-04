@@ -1,4 +1,3 @@
-import secrets
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Header
@@ -7,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from config import MAX_FAILED, LOCK_MINUTES
 from db.database import get_db
-from db.models import User, Role, PasswordResetToken
+from db.models import User, Role
 from services.security import (
     hash_password, verify_password, create_access_token, decode_token
 )
@@ -20,15 +19,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     identifier: str
     password: str
-
-
-class ForgotRequest(BaseModel):
-    email: str
-
-
-class ResetRequest(BaseModel):
-    token: str
-    new_password: str
 
 
 class CreateUserRequest(BaseModel):
@@ -56,7 +46,7 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
     try:
         payload = decode_token(token)
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(User).filter_by(id=int(payload["sub"])).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -78,7 +68,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
     if not user:
         log_event(db, None, "login_failed", False, "user not found")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.status == "locked" and user.locked_until and user.locked_until > datetime.utcnow():
         log_event(db, user.id, "login_failed", False, "account locked")
@@ -93,7 +83,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         else:
             log_event(db, user.id, "login_failed", False, "wrong password")
         db.commit()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user.failed_attempts = 0
     user.status = "active"
@@ -131,42 +121,6 @@ def me(user: User = Depends(get_current_user)):
 def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     log_event(db, user.id, "logout", True)
     return {"message": "Logged out"}
-
-
-# ---------- Password Reset ----------
-@router.post("/forgot-password")
-def forgot_password(data: ForgotRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter_by(email=data.email).first()
-    if user:
-        token = secrets.token_urlsafe(32)
-        db.add(PasswordResetToken(
-            user_id=user.id,
-            token=token,
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
-        ))
-        db.commit()
-        print(f"[RESET LINK] http://127.0.0.1:8000/reset.html?token={token}")
-    return {"message": "If the email exists, a reset link has been sent."}
-
-
-@router.post("/reset-password")
-def reset_password(data: ResetRequest, db: Session = Depends(get_db)):
-    record = db.query(PasswordResetToken).filter_by(token=data.token).first()
-    if not record or record.used or record.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
-
-    user = db.query(User).filter_by(id=record.user_id).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found")
-
-    user.password_hash = hash_password(data.new_password)
-    user.failed_attempts = 0
-    user.status = "active"
-    user.locked_until = None
-    record.used = True
-    log_event(db, user.id, "password_reset", True)
-    db.commit()
-    return {"message": "Password reset successful"}
 
 
 # ---------- Admin: User Management ----------
