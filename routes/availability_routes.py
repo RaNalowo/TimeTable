@@ -9,19 +9,12 @@ from db.database import get_db
 from db.models import TeacherAvailability, PreferenceWindow, User, Teacher, Role
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.time_slots import get_active_slots
 
 router = APIRouter(prefix="/availability", tags=["availability"])
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-TIME_SLOTS = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
-]
-SLOT_HOURS = 1.5
+SLOT_HOURS = 50 / 60
 VALID_STATUS = {"preferred", "neutral", "blocked"}
 DEFAULT_MAX_HOURS = 20
 
@@ -40,9 +33,11 @@ def get_or_create_window(db: Session) -> PreferenceWindow:
     return w
 
 
-def default_matrix() -> dict:
+def default_matrix(db: Session) -> dict:
+    """Build a fresh matrix using the currently active time slots."""
+    slots = get_active_slots(db)
     return {
-        day: {slot: "neutral" for slot in TIME_SLOTS}
+        day: {slot: "neutral" for slot in slots}
         for day in DAYS
     }
 
@@ -51,11 +46,12 @@ def get_teacher_for_user(db: Session, user: User):
     return db.query(Teacher).filter(Teacher.email == user.email).first()
 
 
-def compute_stats(matrix: dict, max_hours: int):
+def compute_stats(matrix: dict, max_hours: int, slots: list):
+    """Compute availability statistics using the given list of slots."""
     available_slots = 0
     total_slots = 0
     for day in DAYS:
-        for slot in TIME_SLOTS:
+        for slot in slots:
             total_slots += 1
             if matrix.get(day, {}).get(slot, "neutral") != "blocked":
                 available_slots += 1
@@ -71,10 +67,10 @@ def compute_stats(matrix: dict, max_hours: int):
 
 
 @router.get("/config")
-def get_config(user: User = Depends(get_current_user)):
+def get_config(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return {
         "days": DAYS,
-        "time_slots": TIME_SLOTS,
+        "time_slots": get_active_slots(db),
         "slot_hours": SLOT_HOURS,
     }
 
@@ -110,13 +106,15 @@ def get_my_availability(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(TeacherAvailability).filter_by(user_id=user.id).first()
-    matrix = json.loads(row.matrix_json) if row else default_matrix()
+    slots = get_active_slots(db)
 
-    # 补齐缺失的 slot（防止旧数据缺键）
+    row = db.query(TeacherAvailability).filter_by(user_id=user.id).first()
+    matrix = json.loads(row.matrix_json) if row else default_matrix(db)
+
+    # Ensure every active slot key exists in the matrix
     for day in DAYS:
         matrix.setdefault(day, {})
-        for slot in TIME_SLOTS:
+        for slot in slots:
             matrix[day].setdefault(slot, "neutral")
 
     teacher = get_teacher_for_user(db, user)
@@ -128,7 +126,7 @@ def get_my_availability(
         "matrix": matrix,
         "max_hours": max_hours,
         "is_frozen": w.is_frozen,
-        "stats": compute_stats(matrix, max_hours),
+        "stats": compute_stats(matrix, max_hours, slots),
     }
 
 
@@ -138,7 +136,7 @@ def save_my_availability(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # 只有 teacher 角色可以提交
+    # Only teachers can submit
     role_names = [r.name for r in user.roles]
     if "teacher" not in role_names:
         raise HTTPException(status_code=403, detail="Only teachers can submit availability preferences")
@@ -147,20 +145,21 @@ def save_my_availability(
     if w.is_frozen:
         raise HTTPException(status_code=403, detail="Preference submission period is closed")
 
-    # 校验矩阵
+    slots = get_active_slots(db)
     matrix = data.matrix
+
     for day in DAYS:
         if day not in matrix:
             raise HTTPException(status_code=400, detail=f"Missing day: {day}")
-        for slot in TIME_SLOTS:
+        for slot in slots:
             status = matrix[day].get(slot, "neutral")
             if status not in VALID_STATUS:
                 raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    # 校验 150% 约束
+    # Validate 150% rule
     teacher = get_teacher_for_user(db, user)
     max_hours = teacher.max_weekly_hours if teacher else DEFAULT_MAX_HOURS
-    stats = compute_stats(matrix, max_hours)
+    stats = compute_stats(matrix, max_hours, slots)
 
     if not stats["ok"]:
         raise HTTPException(
@@ -171,7 +170,7 @@ def save_my_availability(
             ),
         )
 
-    # 保存
+    # Save
     row = db.query(TeacherAvailability).filter_by(user_id=user.id).first()
     if not row:
         row = TeacherAvailability(user_id=user.id, matrix_json=json.dumps(matrix))
@@ -194,12 +193,14 @@ def get_teacher_availability(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
+    slots = get_active_slots(db)
+
     target = db.query(User).filter_by(id=user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
     row = db.query(TeacherAvailability).filter_by(user_id=user_id).first()
-    matrix = json.loads(row.matrix_json) if row else default_matrix()
+    matrix = json.loads(row.matrix_json) if row else default_matrix(db)
 
     teacher = get_teacher_for_user(db, target)
     max_hours = teacher.max_weekly_hours if teacher else DEFAULT_MAX_HOURS
@@ -210,7 +211,7 @@ def get_teacher_availability(
         "email": target.email,
         "matrix": matrix,
         "max_hours": max_hours,
-        "stats": compute_stats(matrix, max_hours),
+        "stats": compute_stats(matrix, max_hours, slots),
     }
 
 

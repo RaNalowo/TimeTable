@@ -12,17 +12,24 @@ from db.models import (
 )
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.time_slots import get_active_slots
 
 router = APIRouter(prefix="/generator", tags=["generator"])
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+# Default fallback — will be replaced at runtime by database values
 SLOTS = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
+    "08:30-09:20",
+    "09:30-10:20",
+    "10:30-11:20",
+    "11:30-12:20",
+    "12:30-13:20",
+    "13:30-14:20",
+    "14:30-15:20",
+    "15:30-16:20",
+    "16:30-17:20",
+    "17:30-18:20",
 ]
 
 # Room type requirements per session type
@@ -40,7 +47,7 @@ REQUIRED_EQUIPMENT_GROUPS = {
 }
 
 
-# ---------- Scoring helpers (used for final score) ----------
+# ---------- Scoring helpers ----------
 def penalty_minimize_gaps(entries):
     groups = {}
     for e in entries:
@@ -130,6 +137,7 @@ def resolve_target_groups(db, raw_groups, semester_level=None):
 
     return sorted(set(resolved))
 
+
 # ---------- Helpers ----------
 def expand_sessions(courses, db):
     """
@@ -162,6 +170,7 @@ def expand_sessions(courses, db):
                 sessions.append({**base, "session_type": "lab"})
 
     return sessions
+
 
 def room_matches_session(room, session_type):
     allowed = REQUIRED_ROOM_TYPES.get(session_type, [])
@@ -199,13 +208,16 @@ def slot_overlaps_lunch(slot, lunch_start, lunch_end):
 
 
 # ---------- Main generator ----------
-# ---------- Main generator ----------
 def generate(db):
     global SLOTS
     t0 = time.time()
-    TIMEOUT_SECONDS = 30   # 30 秒内没排完就停止
+    TIMEOUT_SECONDS = 30
+
+    # ---- Load active time slots from the database ----
+    SLOTS = get_active_slots(db)
 
     log = []
+    log.append(f"Using {len(SLOTS)} time slots: {', '.join(SLOTS)}")
     log.append("Loading input data...")
 
     courses = db.query(Course).all()
@@ -284,7 +296,7 @@ def generate(db):
     timed_out = False
 
     for idx, session in enumerate(sessions):
-        # Check timeout every 20 sessions
+        # Timeout check every 20 sessions
         if idx % 20 == 0 and (time.time() - t0) > TIMEOUT_SECONDS:
             timed_out = True
             remaining = sessions[idx:]
@@ -340,7 +352,7 @@ def generate(db):
                         # ---------- Soft penalty (weighted) ----------
                         p = 0.0
 
-                        # Daily load balance — spread classes across days
+                        # Daily load balance
                         p += day_load[day] * 4
 
                         # Early morning penalty
@@ -453,12 +465,10 @@ def generate(db):
 
     score = max(0, round(100 - total_penalty, 2))
 
-    if timed_out:
+    if timed_out or failed:
         status = "partial"
-    elif not failed:
-        status = "success"
     else:
-        status = "partial"
+        status = "success"
 
     return {
         "status": status,
@@ -473,9 +483,10 @@ def generate(db):
         "entries": placed,
         "failed_sessions": [
             {"course_code": s["course_code"], "session_type": s["session_type"]}
-            for s in failed[:50]   # only return first 50 to keep response small
+            for s in failed[:50]
         ],
     }
+
 
 # ---------- Routes ----------
 @router.post("/generate")

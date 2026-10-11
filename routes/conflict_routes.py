@@ -6,18 +6,12 @@ from db.database import get_db
 from db.models import ScheduleEntry, Room, StudentGroup, User
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.time_slots import get_active_slots
 
 router = APIRouter(prefix="/conflicts", tags=["conflicts"])
 
+# Working days
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-SLOTS = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
-]
 
 # Room type requirements per session type
 REQUIRED_ROOM_TYPES = {
@@ -26,11 +20,11 @@ REQUIRED_ROOM_TYPES = {
     "lab":      ["Computer Lab", "Physics Lab"],
 }
 
-# Required equipment keywords per session type
+# Required equipment keywords per session type (OR-groups)
 REQUIRED_EQUIPMENT_GROUPS = {
     "lecture": [],
     "practice": [],
-    "lab": [["PCs", "Lab Kits"]],  # OR: at least one
+    "lab": [["PCs", "Lab Kits"]],
 }
 
 
@@ -155,7 +149,7 @@ def scan_conflicts(db):
                 },
             })
 
-    # 5. Equipment / gear mismatch (OR groups)
+    # 5. Equipment / gear mismatch
     for e in entries:
         if not e.room_id or not e.session_type:
             continue
@@ -214,6 +208,7 @@ def grid(
     db: Session = Depends(get_db),
 ):
     """Return schedule entries grouped by day and time slot."""
+    SLOTS = get_active_slots(db)
     entries = db.query(ScheduleEntry).all()
     conflict_info = scan_conflicts(db)
     conflicting_ids = set(conflict_info["conflicting_entry_ids"])
@@ -265,6 +260,7 @@ def move_entry(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
+    SLOTS = get_active_slots(db)
     entry = db.query(ScheduleEntry).filter_by(id=entry_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -362,7 +358,6 @@ def swap_entries(
     if not a or not b:
         raise HTTPException(status_code=404, detail="One or both entries not found")
 
-    # swap day + time_slot + room
     a.day, b.day = b.day, a.day
     a.time_slot, b.time_slot = b.time_slot, a.time_slot
     a.room_id, b.room_id = b.room_id, a.room_id
