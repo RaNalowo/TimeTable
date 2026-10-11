@@ -8,18 +8,35 @@
     body { font-family: sans-serif; background: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
     .card { background: #fff; padding: 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 340px; }
     h1 { margin: 0 0 20px; font-size: 22px; text-align: center; }
-    input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-    button { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    input {
+      width: 100%; padding: 10px; margin-bottom: 4px;
+      border: 1px solid #ccc; border-radius: 6px;
+      box-sizing: border-box; font-size: 14px;
+    }
+    input.field-error { border: 2px solid #dc2626; }
+    .field-msg {
+      color: #dc2626; font-size: 12px;
+      min-height: 16px; margin-bottom: 8px;
+    }
+    button {
+      width: 100%; padding: 10px; background: #2563eb; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+    }
     button:hover { background: #1d4ed8; }
-    .error { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 18px; }
+    .error { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 18px; text-align: center; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Secure Login</h1>
-    <form id="loginForm">
-      <input id="identifier" placeholder="Email / Student ID / Employee ID" required />
-      <input id="password" type="password" placeholder="Password" required />
+
+    <form id="loginForm" novalidate>
+      <input id="identifier" placeholder="Email / Student ID / Employee ID" autocomplete="username" />
+      <div class="field-msg" id="identifierMsg"></div>
+
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <div class="field-msg" id="passwordMsg"></div>
+
       <button type="submit">Sign In</button>
       <p id="error" class="error"></p>
     </form>

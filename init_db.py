@@ -197,6 +197,42 @@ def seed_constraints():
     print("Seeded default hard constraints")
 
 
+def seed_semesters():
+    from db.models import Semester
+    if db.query(Semester).count() > 0:
+        print("Semesters already exist, skipping")
+        return
+
+    samples = [
+        Semester(name="2026 Fall", start_date="2026-09-01",
+                 end_date="2026-12-20", is_active=True),
+        Semester(name="2027 Spring", start_date="2027-01-15",
+                 end_date="2027-05-30", is_active=False),
+    ]
+    db.add_all(samples)
+    db.commit()
+    print(f"Seeded {len(samples)} semesters")
+
+
+def seed_time_slots():
+    from db.models import TimeSlot
+    if db.query(TimeSlot).count() > 0:
+        print("Time slots already exist, skipping")
+        return
+
+    labels = [
+        ("08:30-10:00", 1),
+        ("10:15-11:45", 2),
+        ("12:00-13:30", 3),
+        ("13:30-15:00", 4),
+        ("15:15-16:45", 5),
+        ("17:00-18:30", 6),
+    ]
+    for label, order in labels:
+        db.add(TimeSlot(slot_label=label, sort_order=order, is_active=True))
+    db.commit()
+    print(f"Seeded {len(labels)} time slots")
+
 # 9. Seed soft constraints (User Story 8)
 def seed_soft_constraints():
     from db.models import SoftConstraint
@@ -242,6 +278,9 @@ seed_courses()
 seed_preference_window()
 seed_constraints()
 seed_soft_constraints()
+seed_semesters()
+seed_time_slots()
+
 
 db.close()
 print("Done.")

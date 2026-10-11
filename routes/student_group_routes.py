@@ -32,7 +32,9 @@ def list_groups(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    groups = db.query(StudentGroup).order_by(StudentGroup.group_code).all()
+    groups = db.query(StudentGroup).order_by(
+        StudentGroup.program, StudentGroup.year, StudentGroup.group_code
+    ).all()
     return [group_to_dict(g) for g in groups]
 
 
@@ -58,6 +60,35 @@ def create_group(
     return group_to_dict(g)
 
 
+@router.put("/{group_id}")
+def update_group(
+    group_id: int,
+    data: StudentGroupRequest,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    g = db.query(StudentGroup).filter_by(id=group_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    dup = db.query(StudentGroup).filter(
+        StudentGroup.group_code == data.group_code,
+        StudentGroup.id != group_id,
+    ).first()
+    if dup:
+        raise HTTPException(status_code=400, detail="Group code already exists")
+
+    g.group_code = data.group_code
+    g.program = data.program
+    g.year = data.year
+    g.student_count = data.student_count
+    db.commit()
+    db.refresh(g)
+
+    log_event(db, admin.id, "student_group_updated", True, f"id={group_id}")
+    return group_to_dict(g)
+
+
 @router.delete("/{group_id}")
 def delete_group(
     group_id: int,
@@ -69,4 +100,5 @@ def delete_group(
         raise HTTPException(status_code=404, detail="Group not found")
     db.delete(g)
     db.commit()
+    log_event(db, admin.id, "student_group_deleted", True, f"id={group_id}")
     return {"message": "Group deleted"}

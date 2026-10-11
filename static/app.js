@@ -32,14 +32,59 @@ function initLoginPage() {
   const form = document.getElementById("loginForm");
   if (!form) return;
 
+  const identifierEl = document.getElementById("identifier");
+  const passwordEl = document.getElementById("password");
+  const identifierMsg = document.getElementById("identifierMsg");
+  const passwordMsg = document.getElementById("passwordMsg");
+  const errorEl = document.getElementById("error");
+
+  // Clear per-field messages on input
+  identifierEl.addEventListener("input", () => {
+    identifierMsg.textContent = "";
+    identifierEl.classList.remove("field-error");
+    errorEl.textContent = "";
+  });
+  passwordEl.addEventListener("input", () => {
+    passwordMsg.textContent = "";
+    passwordEl.classList.remove("field-error");
+    errorEl.textContent = "";
+  });
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const err = document.getElementById("error");
-    err.textContent = "";
 
-    const identifier = document.getElementById("identifier").value.trim();
-    const password = document.getElementById("password").value;
+    // Reset messages
+    identifierMsg.textContent = "";
+    passwordMsg.textContent = "";
+    errorEl.textContent = "";
+    identifierEl.classList.remove("field-error");
+    passwordEl.classList.remove("field-error");
 
+    const identifier = identifierEl.value.trim();
+    const password = passwordEl.value;
+
+    // ---------- Custom validation ----------
+    let hasError = false;
+
+    if (!identifier) {
+      identifierMsg.textContent = "Please enter your email, Student ID or Employee ID.";
+      identifierEl.classList.add("field-error");
+      hasError = true;
+    }
+
+    if (!password) {
+      passwordMsg.textContent = "Please enter your password.";
+      passwordEl.classList.add("field-error");
+      hasError = true;
+    } else if (password.length < 6) {
+      passwordMsg.textContent = "Password must be at least 6 characters.";
+      passwordEl.classList.add("field-error");
+      hasError = true;
+    }
+
+    if (hasError) return;   // stop before sending request
+
+    // ---------- Send login request ----------
     try {
       const res = await fetch(API + "/auth/login", {
         method: "POST",
@@ -49,14 +94,14 @@ function initLoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        err.textContent = data.detail || "Login failed";
+        errorEl.textContent = data.detail || "Invalid email or password";
         return;
       }
 
       saveToken(data.access_token, data.user);
       window.location.href = "/dashboard.html";
     } catch (e) {
-      err.textContent = "Network error";
+      errorEl.textContent = "Network error. Please try again.";
     }
   });
 }
@@ -817,7 +862,7 @@ function filterCourses() {
 }
 
 // ============================================================
-// Teacher Availability Preference
+// Teacher Availability Preference (User Story 6)
 // ============================================================
 
 let availConfig = { days: [], time_slots: [], slot_hours: 1.5 };
@@ -827,7 +872,7 @@ let availMaxHours = 20;
 let availIsAdmin = false;
 let availIsTeacher = false;
 
-const CYCLE = ["preferred", "neutral", "blocked"];
+const AVAIL_CYCLE = ["preferred", "neutral", "blocked"];
 
 async function initAvailabilityPage() {
   const grid = document.getElementById("gridTable");
@@ -875,11 +920,12 @@ async function initAvailabilityPage() {
     loadTeacherList();
   }
 
-  renderGrid();
+  renderAvailabilityGrid();
   updateStats();
 }
 
-function renderGrid() {
+// RENAMED to avoid clash with User Story 10's renderGrid()
+function renderAvailabilityGrid() {
   const grid = document.getElementById("gridTable");
   const { days, time_slots } = availConfig;
 
@@ -909,10 +955,10 @@ function cycleCell(td) {
   if (availFrozen) return;
   if (!availIsTeacher) return;
 
-  const current = CYCLE.find(s => td.classList.contains(s)) || "neutral";
-  const next = CYCLE[(CYCLE.indexOf(current) + 1) % CYCLE.length];
+  const current = AVAIL_CYCLE.find(s => td.classList.contains(s)) || "neutral";
+  const next = AVAIL_CYCLE[(AVAIL_CYCLE.indexOf(current) + 1) % AVAIL_CYCLE.length];
 
-  CYCLE.forEach(s => td.classList.remove(s));
+  AVAIL_CYCLE.forEach(s => td.classList.remove(s));
   td.classList.add(next);
 
   const day = td.dataset.day;
@@ -986,7 +1032,7 @@ function resetMatrix() {
     time_slots.forEach(s => fresh[d][s] = "neutral");
   });
   availMatrix = fresh;
-  renderGrid();
+  renderAvailabilityGrid();
   updateStats();
 }
 
@@ -1092,7 +1138,6 @@ async function initConstraintsPage() {
     document.querySelectorAll("button.btn").forEach(b => b.style.display = "none");
   }
 
-  // Render day checkboxes for lunch break config
   const dayChecks = document.getElementById("dayChecks");
   if (dayChecks) {
     dayChecks.innerHTML = ALL_DAYS.map(d => `
@@ -1127,7 +1172,6 @@ async function loadConstraints() {
     if (card) card.classList.toggle("active", c.is_active);
   }
 
-  // Lunch break config
   const lb = constraintCache["lunch_break"];
   const lunchConfig = document.getElementById("lunchConfig");
   if (lb && lunchConfig) {
@@ -1228,7 +1272,6 @@ async function runDemoValidation() {
   box.style.display = "block";
   box.textContent = "Running...";
 
-  // Two intentionally conflicting entries + one during lunch
   const entries = [
     {
       day: "Mon", time_slot: "08:30-10:00",
@@ -1276,7 +1319,6 @@ async function runDemoValidation() {
     </div>
   `).join("");
 }
-
 
 // ============================================================
 // Soft Constraints (User Story 8)
@@ -1379,7 +1421,6 @@ async function saveAllWeights() {
     const weight = parseInt(slider.value, 10);
     const is_enabled = enabled.checked;
 
-    // Client-side validation
     if (isNaN(weight) || weight < 0 || weight > 10) {
       msg.style.color = "#dc2626";
       msg.textContent = `Invalid weight for ${key}. Must be 0-10.`;
@@ -1439,7 +1480,6 @@ async function runScorePreview() {
   box.style.display = "block";
   box.innerHTML = "Running...";
 
-  // Sample schedule with known gaps + early morning + late evening
   const entries = [
     { day: "Mon", time_slot: "08:30-10:00", course_code: "MATH101", student_group: "CS-2301" },
     { day: "Mon", time_slot: "12:00-13:30", course_code: "CS201",   student_group: "CS-2301" },
@@ -1489,7 +1529,6 @@ async function runScorePreview() {
   `;
 }
 
-
 // ============================================================
 // AI Timetable Generator (User Story 9)
 // ============================================================
@@ -1521,7 +1560,6 @@ async function initGeneratorPage() {
     return;
   }
 
-  // Load any previously generated entries
   loadExistingEntries();
 }
 
@@ -1532,7 +1570,7 @@ async function loadExistingEntries() {
   if (!res.ok) return;
   const entries = await res.json();
   if (entries.length === 0) return;
-  renderEntries(entries);
+  renderGeneratorEntries(entries);
   document.getElementById("entriesPanel").style.display = "block";
 }
 
@@ -1549,7 +1587,6 @@ async function runGeneration() {
   progressFill.style.width = "0%";
   progressText.textContent = "Starting generator...";
 
-  // Animated progress while waiting for the response
   let pct = 0;
   const timer = setInterval(() => {
     pct = Math.min(pct + 5, 90);
@@ -1584,10 +1621,10 @@ async function runGeneration() {
       : `Generated ${data.placed_count} sessions, but ${data.failed_count} could not be placed.`;
     showStatusBanner(data.status, msg);
 
-    renderScore(data);
-    renderLog(data.log);
-    renderEntries(data.entries);
-    renderFailed(data.failed_sessions);
+    renderGeneratorScore(data);
+    renderGeneratorLog(data.log);
+    renderGeneratorEntries(data.entries);
+    renderGeneratorFailed(data.failed_sessions);
   } catch (e) {
     clearInterval(timer);
     progressFill.style.width = "100%";
@@ -1606,7 +1643,7 @@ function showStatusBanner(type, text) {
   el.style.display = "block";
 }
 
-function renderScore(data) {
+function renderGeneratorScore(data) {
   const panel = document.getElementById("scorePanel");
   const box = document.getElementById("scoreBox");
   panel.style.display = "block";
@@ -1635,7 +1672,7 @@ function renderScore(data) {
   `;
 }
 
-function renderLog(lines) {
+function renderGeneratorLog(lines) {
   const panel = document.getElementById("logPanel");
   const box = document.getElementById("logBox");
   panel.style.display = "block";
@@ -1647,7 +1684,7 @@ function renderLog(lines) {
   }).join("");
 }
 
-function renderEntries(entries) {
+function renderGeneratorEntries(entries) {
   const panel = document.getElementById("entriesPanel");
   const tbody = document.getElementById("entriesBody");
   panel.style.display = "block";
@@ -1665,7 +1702,7 @@ function renderEntries(entries) {
   `).join("");
 }
 
-function renderFailed(failed) {
+function renderGeneratorFailed(failed) {
   const box = document.getElementById("failedBox");
   if (!failed || failed.length === 0) {
     box.style.display = "none";
@@ -1680,7 +1717,6 @@ function renderFailed(failed) {
   `;
 }
 
-
 // ============================================================
 // Real-Time Conflict Detection (User Story 10)
 // ============================================================
@@ -1693,6 +1729,10 @@ let draggingEntryId = null;
 let pendingSwap = null;
 
 async function initSchedulePage() {
+  // Guard: only run on schedule.html (which has summaryText)
+  const summaryEl = document.getElementById("summaryText");
+  if (!summaryEl) return;
+
   const gridTable = document.getElementById("gridTable");
   if (!gridTable) return;
 
@@ -1713,7 +1753,6 @@ async function initSchedulePage() {
   const me = await meRes.json();
   scheduleIsAdmin = me.roles.includes("admin");
 
-  // Load rooms for the move modal
   const roomsRes = await fetch(API + "/rooms", {
     headers: { "Authorization": "Bearer " + token },
   });
@@ -1721,7 +1760,6 @@ async function initSchedulePage() {
     roomsCache = await roomsRes.json();
   }
 
-  // Populate move modal dropdowns
   const daySel = document.getElementById("moveDay");
   const slotSel = document.getElementById("moveSlot");
   daySel.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri"]
@@ -1750,7 +1788,7 @@ async function refreshGrid() {
     return;
   }
   scheduleData = await res.json();
-  renderGrid();
+  renderScheduleGrid();
   renderConflicts();
   updateBanner();
 }
@@ -1759,7 +1797,8 @@ async function rescanConflicts() {
   await refreshGrid();
 }
 
-function renderGrid() {
+// RENAMED to avoid clash with User Story 6's renderGrid()
+function renderScheduleGrid() {
   const table = document.getElementById("gridTable");
   const { days, time_slots, cells } = scheduleData;
 
@@ -1781,21 +1820,21 @@ function renderGrid() {
         html += `<span style="color:#d1d5db;font-size:11px;">—</span>`;
       } else {
         entries.forEach(e => {
-              const cls = e.has_conflict ? "conflict-error" : "";
-              html += `
-                <div class="entry-card ${cls}"
-                     draggable="true"
-                     ondragstart="onDragStart(event, ${e.id})"
-                     ondragend="onDragEnd(event)"
-                     onclick="openMoveModal(${e.id}, '${e.course_code}', '${day}', '${slot}')"
-                     onmouseenter="showEntryTooltip(event, ${e.id})"
-                     onmouseleave="hideTooltip()">
-                  <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
-                  <div class="course">${e.course_code} <span class="type">${e.session_type}</span></div>
-                  <div class="meta">${e.room_code} · ${e.teacher_name || "-"}</div>
-                </div>
-              `;
-            });
+          const cls = e.has_conflict ? "conflict-error" : "";
+          html += `
+            <div class="entry-card ${cls}"
+                 draggable="true"
+                 ondragstart="onDragStart(event, ${e.id})"
+                 ondragend="onDragEnd(event)"
+                 onclick="openMoveModal(${e.id}, '${e.course_code}', '${day}', '${slot}')"
+                 onmouseenter="showEntryTooltip(event, ${e.id})"
+                 onmouseleave="hideTooltip()">
+              <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
+              <div class="course">${e.course_code} <span class="type">${e.session_type}</span></div>
+              <div class="meta">${e.room_code} · ${e.teacher_name || "-"}</div>
+            </div>
+          `;
+        });
       }
       html += `</td>`;
     });
@@ -1805,7 +1844,6 @@ function renderGrid() {
 
   table.innerHTML = html;
 
-  // Summary text
   const errors = scheduleData.error_count || 0;
   const warnings = scheduleData.warning_count || 0;
   const total = scheduleData.total_entries || 0;
@@ -1952,7 +1990,7 @@ async function submitMove() {
   }
 
   closeMoveModal();
-  await refreshGrid();   // ← real-time re-scan
+  await refreshGrid();
 }
 
 // ============================================================
@@ -2094,7 +2132,6 @@ async function confirmSwap() {
   }
 }
 
-
 // ============================================================
 // Smart Room Auto-Fitting (User Story 12)
 // ============================================================
@@ -2109,7 +2146,6 @@ async function initRoomFittingPage() {
     return;
   }
 
-  // Load student groups into checkboxes
   const groupsRes = await fetch(API + "/student-groups", {
     headers: { "Authorization": "Bearer " + token },
   });
@@ -2206,24 +2242,562 @@ function renderFitResults(data) {
 
 
 // ============================================================
+// Manage Academic Semesters (US-07)
+// ============================================================
+
+let editingSemesterId = null;
+let semesterIsAdmin = false;
+
+async function initSemestersPage() {
+  const table = document.getElementById("semesterTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  semesterIsAdmin = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (semesterIsAdmin) {
+    formPanel.style.display = "block";
+    accessMsg.textContent = "";
+  } else {
+    formPanel.style.display = "none";
+    actionCol.style.display = "none";
+    accessMsg.textContent = "Read-only. Only admins can modify semesters.";
+  }
+
+  const form = document.getElementById("semesterForm");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("formMsg");
+    msg.textContent = "";
+
+    const payload = {
+      name: document.getElementById("name").value.trim(),
+      start_date: document.getElementById("start_date").value,
+      end_date: document.getElementById("end_date").value,
+    };
+
+    // Client-side validation
+    if (payload.start_date >= payload.end_date) {
+      msg.style.color = "#dc2626";
+      msg.textContent = "Start date must be before end date.";
+      return;
+    }
+
+    const url = editingSemesterId
+      ? API + "/semesters/" + editingSemesterId
+      : API + "/semesters";
+    const method = editingSemesterId ? "PUT" : "POST";
+
+    const r = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      msg.style.color = "#dc2626";
+      msg.textContent = data.detail || "Failed";
+      return;
+    }
+
+    msg.style.color = "#16a34a";
+    msg.textContent = editingSemesterId
+      ? "Semester updated successfully"
+      : "Semester created successfully";
+
+    editingSemesterId = null;
+    document.getElementById("formSubmitBtn").textContent = "Save Semester";
+    document.getElementById("formTitle").textContent = "Add Semester";
+    form.reset();
+    loadSemesters();
+  });
+
+  loadSemesters();
+}
+
+async function loadSemesters() {
+  const tbody = document.getElementById("semesterTable");
+  if (!tbody) return;
+
+  const res = await fetch(API + "/semesters", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    tbody.innerHTML = `<tr><td colspan="5">Failed to load semesters</td></tr>`;
+    return;
+  }
+  const semesters = await res.json();
+
+  // Update active label
+  const active = semesters.find(s => s.is_active);
+  document.getElementById("activeSemesterLabel").textContent =
+    active ? `Active: ${active.name}` : "No active semester";
+
+  if (semesters.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No semesters yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = semesters.map(s => `
+    <tr>
+      <td><b>${s.name}</b></td>
+      <td>${s.start_date}</td>
+      <td>${s.end_date}</td>
+      <td>
+        <span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">
+          ${s.is_active ? "Active" : "Inactive"}
+        </span>
+      </td>
+      ${semesterIsAdmin ? `
+        <td>
+          <button class="btn-edit" onclick="editSemester(${s.id})">Edit</button>
+          <button class="btn-activate" onclick="activateSemester(${s.id})"
+                  ${s.is_active ? "disabled" : ""}>
+            ${s.is_active ? "Active" : "Set Active"}
+          </button>
+          <button class="btn-del" onclick="deleteSemester(${s.id})">Delete</button>
+        </td>
+      ` : `<td></td>`}
+    </tr>
+  `).join("");
+}
+
+async function editSemester(id) {
+  const res = await fetch(API + "/semesters", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+  const s = list.find(x => x.id === id);
+  if (!s) return;
+
+  document.getElementById("name").value = s.name;
+  document.getElementById("start_date").value = s.start_date;
+  document.getElementById("end_date").value = s.end_date;
+
+  editingSemesterId = id;
+  document.getElementById("formTitle").textContent = "Edit Semester";
+  document.getElementById("formSubmitBtn").textContent = "Update Semester";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function activateSemester(id) {
+  const res = await fetch(API + "/semesters/" + id + "/activate", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.detail || "Failed to activate");
+    return;
+  }
+  loadSemesters();
+}
+
+async function deleteSemester(id) {
+  if (!confirm("Delete this semester? This action cannot be undone.")) return;
+
+  const res = await fetch(API + "/semesters/" + id, {
+    method: "DELETE",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.detail || "Delete failed");
+    return;
+  }
+  loadSemesters();
+}
+
+// ============================================================
+// Manage Student Groups (US-08)
+// ============================================================
+
+let editingGroupId = null;
+let groupIsAdmin = false;
+
+async function initStudentGroupsPage() {
+  const table = document.getElementById("groupTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  groupIsAdmin = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (groupIsAdmin) {
+    formPanel.style.display = "block";
+    accessMsg.textContent = "";
+  } else {
+    formPanel.style.display = "none";
+    actionCol.style.display = "none";
+    accessMsg.textContent = "Read-only. Only admins can modify student groups.";
+  }
+
+  const form = document.getElementById("groupForm");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("formMsg");
+    msg.textContent = "";
+
+    const payload = {
+      group_code: document.getElementById("group_code").value.trim(),
+      program: document.getElementById("program").value.trim() || null,
+      year: parseInt(document.getElementById("year").value, 10) || null,
+      student_count: parseInt(document.getElementById("student_count").value, 10) || 0,
+    };
+
+    const url = editingGroupId
+      ? API + "/student-groups/" + editingGroupId
+      : API + "/student-groups";
+    const method = editingGroupId ? "PUT" : "POST";
+
+    const r = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      msg.style.color = "#dc2626";
+      msg.textContent = data.detail || "Failed";
+      return;
+    }
+
+    msg.style.color = "#16a34a";
+    msg.textContent = editingGroupId
+      ? "Student group updated"
+      : "Student group created";
+
+    editingGroupId = null;
+    document.getElementById("formSubmitBtn").textContent = "Save Group";
+    document.getElementById("formTitle").textContent = "Add Student Group";
+    form.reset();
+    loadStudentGroups();
+  });
+
+  loadStudentGroups();
+}
+
+async function loadStudentGroups() {
+  const tbody = document.getElementById("groupTable");
+  if (!tbody) return;
+
+  const res = await fetch(API + "/student-groups", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    tbody.innerHTML = `<tr><td colspan="5">Failed to load groups</td></tr>`;
+    return;
+  }
+  const groups = await res.json();
+
+  document.getElementById("countLabel").textContent =
+    `${groups.length} group(s)`;
+
+  if (groups.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No groups yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = groups.map(g => `
+    <tr>
+      <td><b>${g.group_code}</b></td>
+      <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
+      <td>${g.year ?? "-"}</td>
+      <td>${g.student_count}</td>
+      ${groupIsAdmin ? `
+        <td>
+          <button class="btn-edit" onclick="editGroup(${g.id})">Edit</button>
+          <button class="btn-del" onclick="deleteGroup(${g.id})">Delete</button>
+        </td>
+      ` : `<td></td>`}
+    </tr>
+  `).join("");
+}
+
+async function editGroup(id) {
+  const res = await fetch(API + "/student-groups", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+  const g = list.find(x => x.id === id);
+  if (!g) return;
+
+  document.getElementById("group_code").value = g.group_code;
+  document.getElementById("program").value = g.program || "";
+  document.getElementById("year").value = g.year || "";
+  document.getElementById("student_count").value = g.student_count;
+
+  editingGroupId = id;
+  document.getElementById("formTitle").textContent = "Edit Student Group";
+  document.getElementById("formSubmitBtn").textContent = "Update Group";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteGroup(id) {
+  if (!confirm("Delete this student group? Courses using it will lose their target group.")) return;
+
+  const res = await fetch(API + "/student-groups/" + id, {
+    method: "DELETE",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    alert(data.detail || "Delete failed");
+    return;
+  }
+  loadStudentGroups();
+}
+
+function filterGroups() {
+  const el = document.getElementById("groupFilter");
+  if (!el) return;
+  const q = el.value.toLowerCase();
+  document.querySelectorAll("#groupTable tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+
+// ============================================================
+// Manage Time Slots (US-09)
+// ============================================================
+
+let editingSlotId = null;
+let slotIsAdmin = false;
+
+async function initTimeSlotsPage() {
+  const table = document.getElementById("slotTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  slotIsAdmin = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (slotIsAdmin) {
+    formPanel.style.display = "block";
+    accessMsg.textContent = "";
+  } else {
+    formPanel.style.display = "none";
+    actionCol.style.display = "none";
+    accessMsg.textContent = "Read-only. Only admins can modify time slots.";
+  }
+
+  const form = document.getElementById("slotForm");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("formMsg");
+    msg.textContent = "";
+
+    const payload = {
+      slot_label: document.getElementById("slot_label").value.trim(),
+      sort_order: parseInt(document.getElementById("sort_order").value, 10) || 0,
+      is_active: document.getElementById("is_active").value === "true",
+    };
+
+    const url = editingSlotId
+      ? API + "/time-slots/" + editingSlotId
+      : API + "/time-slots";
+    const method = editingSlotId ? "PUT" : "POST";
+
+    const r = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      msg.style.color = "#dc2626";
+      msg.textContent = data.detail || "Failed";
+      return;
+    }
+
+    msg.style.color = "#16a34a";
+    msg.textContent = editingSlotId
+      ? "Time slot updated"
+      : "Time slot created";
+
+    editingSlotId = null;
+    document.getElementById("formSubmitBtn").textContent = "Save Slot";
+    document.getElementById("formTitle").textContent = "Add Time Slot";
+    form.reset();
+    loadTimeSlots();
+  });
+
+  loadTimeSlots();
+}
+
+async function loadTimeSlots() {
+  const tbody = document.getElementById("slotTable");
+  if (!tbody) return;
+
+  const res = await fetch(API + "/time-slots", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    tbody.innerHTML = `<tr><td colspan="4">Failed to load time slots</td></tr>`;
+    return;
+  }
+  const slots = await res.json();
+
+  document.getElementById("countLabel").textContent = `${slots.length} slot(s)`;
+
+  if (slots.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="color:#888;">No time slots yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = slots.map(s => `
+    <tr>
+      <td><b>${s.slot_label}</b></td>
+      <td>${s.sort_order}</td>
+      <td>
+        <span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">
+          ${s.is_active ? "Active" : "Inactive"}
+        </span>
+      </td>
+      ${slotIsAdmin ? `
+        <td>
+          <button class="btn-edit" onclick="editSlot(${s.id})">Edit</button>
+          <button class="btn-del" onclick="deleteSlot(${s.id})">Delete</button>
+        </td>
+      ` : `<td></td>`}
+    </tr>
+  `).join("");
+}
+
+async function editSlot(id) {
+  const res = await fetch(API + "/time-slots", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+  const s = list.find(x => x.id === id);
+  if (!s) return;
+
+  document.getElementById("slot_label").value = s.slot_label;
+  document.getElementById("sort_order").value = s.sort_order;
+  document.getElementById("is_active").value = s.is_active ? "true" : "false";
+
+  editingSlotId = id;
+  document.getElementById("formTitle").textContent = "Edit Time Slot";
+  document.getElementById("formSubmitBtn").textContent = "Update Slot";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteSlot(id) {
+  if (!confirm("Delete this time slot?")) return;
+
+  const res = await fetch(API + "/time-slots/" + id, {
+    method: "DELETE",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    alert(data.detail || "Delete failed");
+    return;
+  }
+  loadTimeSlots();
+}
+
+
+// ============================================================
 // Shared Sidebar
 // ============================================================
 
 const SIDEBAR_ITEMS = [
-  // All roles
-  { href: "/dashboard.html",        label: "Dashboard",         roles: ["admin", "teacher", "student"] },
-  { href: "/schedule.html",         label: "Schedule Grid",     roles: ["admin", "teacher", "student"] },
-  { href: "/availability.html",     label: "My Availability",   roles: ["admin", "teacher"] },
+  // ---- Sprint 1 ----
+  { href: "/dashboard.html",        label: "Dashboard",             roles: ["admin", "teacher", "student"], sprint: 1 },
+  { href: "/availability.html",     label: "My Availability",       roles: ["admin", "teacher"],            sprint: 1 },
+  { href: "/rooms.html",            label: "Manage Rooms",          roles: ["admin"],                       sprint: 1 },
+  { href: "/teachers.html",         label: "Manage Faculty",        roles: ["admin"],                       sprint: 1 },
+  { href: "/courses.html",          label: "Manage Curriculum",     roles: ["admin"],                       sprint: 1 },
 
-  // Admin only
-  { href: "/rooms.html",            label: "Manage Rooms",      roles: ["admin"] },
-  { href: "/teachers.html",         label: "Manage Faculty",    roles: ["admin"] },
-  { href: "/courses.html",          label: "Manage Curriculum", roles: ["admin"] },
-  { href: "/constraints.html",      label: "Hard Constraints",  roles: ["admin"] },
-  { href: "/soft-constraints.html", label: "Soft Constraints",  roles: ["admin"] },
-  { href: "/generator.html",        label: "AI Generator",      roles: ["admin"] },
-  { href: "/room-fitting.html",     label: "Room Fitting",      roles: ["admin"] },
+  // ---- Sprint 2 ----
+  { href: "/semesters.html",        label: "Manage Semesters",      roles: ["admin"],                       sprint: 2 },
+  { href: "/student-groups.html",   label: "Manage Student Groups", roles: ["admin"],                       sprint: 2 },
+  { href: "/time-slots.html",       label: "Manage Time Slots",     roles: ["admin"],                       sprint: 2 },
+  { href: "/constraints.html",      label: "Hard Constraints",      roles: ["admin"],                       sprint: 2 },
+  { href: "/soft-constraints.html", label: "Soft Constraints",      roles: ["admin"],                       sprint: 2 },
+
+  // ---- Sprint 3 (hidden until unlocked) ----
+  { href: "/generator.html",        label: "AI Generator",          roles: ["admin"],                       sprint: 3 },
+  { href: "/room-fitting.html",     label: "Room Fitting",          roles: ["admin"],                       sprint: 3 },
+
+  // ---- Sprint 4 (hidden until unlocked) ----
+  { href: "/schedule.html",         label: "Schedule Grid",         roles: ["admin", "teacher", "student"], sprint: 4 },
 ];
+
+// Change this number to unlock more sprints.
+// 2 = show only Sprint 1 + 2 (current demo)
+// 3 = show Sprint 3 features too
+// 4 = show everything (full system)
+const CURRENT_SPRINT = 2;
 
 const SIDEBAR_ACTIONS = [
   { action: "timetable", label: "View Timetable", roles: ["admin", "teacher", "student"] },
@@ -2287,7 +2861,9 @@ function renderSidebar() {
     return item.roles.some(r => userRoles.includes(r));
   };
 
-  const visibleItems = SIDEBAR_ITEMS.filter(hasRole);
+  const visibleItems = SIDEBAR_ITEMS.filter(item =>
+    hasRole(item) && (item.sprint || 1) <= CURRENT_SPRINT
+  );
 
   const current = window.location.pathname;
 
@@ -2322,10 +2898,13 @@ document.addEventListener("DOMContentLoaded", () => {
   initRoomsPage();
   initTeachersPage();
   initCoursesPage();
+  initStudentGroupsPage();
   initAvailabilityPage();
   initConstraintsPage();
   initSoftConstraintsPage();
   initGeneratorPage();
   initSchedulePage();
   initRoomFittingPage();
+  initSemestersPage();
+  initTimeSlotsPage();
 });

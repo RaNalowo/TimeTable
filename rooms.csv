@@ -1,0 +1,51 @@
+﻿campus,building,room_code,capacity,room_type,equipment
+Main,G block,G102,30,Regular Classroom,"Projector, AC"
+Main,I block,I 202,30,Regular Classroom,"Projector, AC"
+Main,F block,F107,30,Regular Classroom,"30 PCs, Projector"
+Main,F block,F108,30,Regular Classroom,"30 PCs, Projector"
+Main,I block,I 312,30,Regular Classroom,Projector
+Main,I block,I 101,80,Lecture Hall,"Projector, Smart Board"
+Main,F block,F204,30,Regular Classroom,"30 PCs, Projector"
+Main,I block,I 102,50,Seminar Room,"Smart Board, AC"
+Main,I block,I 303,30,Regular Classroom,Projector
+Main,F block,F304,30,Regular Classroom,"Projector, AC"
+Main,D block,D217,80,Lecture Hall,"Projector, Smart Board"
+Main,E block,E117,80,Lecture Hall,"Projector, Smart Board"
+Main,I block,I 211,30,Regular Classroom,Projector
+Main,I block,I 212,30,Regular Classroom,Projector
+Main,D block,D218,50,Seminar Room,"Smart Board, AC"
+Main,F block,F301,30,Regular Classroom,"Projector, AC"
+Main,D block,D113,80,Lecture Hall,"Projector, Smart Board"
+Main,G block,G103,30,Regular Classroom,"Smart Board, AC"
+Main,F block,F202,30,Regular Classroom,"30 PCs, Projector"
+Main,D block,D116,50,Seminar Room,"Smart Board, AC"
+Main,F block,F303,30,Regular Classroom,"Projector, AC"
+Main,F block,F101,30,Regular Classroom,"Projector, AC"
+Main,G block,G101,30,Regular Classroom,"Projector, Smart Board"
+Main,G block,G104,30,Regular Classroom,"Projector, Smart Board"
+Main,F block,F103,30,Regular Classroom,"Projector, AC"
+Main,G block,G302,30,Regular Classroom,"Projector, AC"
+Main,I block,I 310,30,Regular Classroom,Projector
+Main,I block,I 311,30,Regular Classroom,Projector
+Main,D block,D214,80,Lecture Hall,"Projector, Smart Board"
+Main,H block,H 101,80,Lecture Hall,"Projector, Smart Board"
+Main,H block,H 102,30,Regular Classroom,Projector
+Main,H block,H 103,30,Regular Classroom,Projector
+Main,H block,H 111,80,Lecture Hall,"Projector, Smart Board"
+Main,H block,H 201,30,Regular Classroom,Projector
+Main,H block,H 202,50,Seminar Room,"Smart Board, AC"
+Main,H block,H 203,50,Seminar Room,"Smart Board, AC"
+Main,H block,H 301,30,Regular Classroom,Projector
+Main,H block,H 302,30,Regular Classroom,Projector
+Main,H block,H 303,50,Seminar Room,"Smart Board, AC"
+Main,H block,H 01,30,Regular Classroom,Projector
+Main,H block,H 02,30,Regular Classroom,Projector
+Main,H block,H 03,30,Regular Classroom,Projector
+Main,D block,D108,30,Computer Lab,"30 PCs, Lab Kits"
+Main,G block,G107,30,Regular Classroom,"30 PCs, Projector"
+Main,F block,LAB-EN1,40,Computer Lab,"30 PCs, Projector"
+Main,F block,LAB-EN2,40,Computer Lab,"30 PCs, Projector"
+Main,F block,LAB-EN4,40,Computer Lab,"30 PCs, Projector"
+Main,F block,LAB-EN5,40,Computer Lab,"30 PCs, Projector"
+Main,E block,E221,30,Regular Classroom,Projector
+Main,E block,E302,30,Regular Classroom,"Smart Board, AC"

@@ -17,6 +17,9 @@ from routes.soft_constraint_routes import router as soft_constraint_router
 from routes.generator_routes import router as generator_router
 from routes.conflict_routes import router as conflict_router
 from routes.room_fitting_routes import router as room_fitting_router
+from routes.semester_routes import router as semester_router
+from routes.time_slot_routes import router as time_slot_router
+
 
 
 
@@ -44,6 +47,8 @@ app.include_router(soft_constraint_router)
 app.include_router(generator_router)
 app.include_router(conflict_router)
 app.include_router(room_fitting_router)
+app.include_router(semester_router)
+app.include_router(time_slot_router)
 
 
 
@@ -97,3 +102,15 @@ def schedule_page():
 @app.get("/room-fitting.html")
 def room_fitting_page():
     return FileResponse("templates/room-fitting.html")
+
+@app.get("/semesters.html")
+def semesters_page():
+    return FileResponse("templates/semesters.html")
+
+@app.get("/student-groups.html")
+def student_groups_page():
+    return FileResponse("templates/student_groups.html")
+
+@app.get("/time-slots.html")
+def time_slots_page():
+    return FileResponse("templates/time-slots.html")

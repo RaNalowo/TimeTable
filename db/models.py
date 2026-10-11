@@ -164,3 +164,22 @@ class ScheduleEntry(Base):
     teacher_name = Column(String, nullable=True)
     target_groups = Column(String, nullable=True)   # 逗号分隔
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class Semester(Base):
+    __tablename__ = "semesters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    start_date = Column(String, nullable=False)   # YYYY-MM-DD
+    end_date = Column(String, nullable=False)     # YYYY-MM-DD
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class TimeSlot(Base):
+    __tablename__ = "time_slots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    slot_label = Column(String, unique=True, nullable=False, index=True)  # "08:30-10:00"
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

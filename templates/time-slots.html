@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manage Time Slots</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
+
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #fff; padding: 16px 24px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+
+    .panel {
+      background: #fff; padding: 20px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+    }
+    .panel h2 { margin-top: 0; font-size: 16px; }
+
+    form#slotForm {
+      display: grid; gap: 10px;
+      grid-template-columns: 2fr 1fr 1fr auto;
+      align-items: end;
+    }
+    form#slotForm input, form#slotForm select {
+      padding: 8px 10px; border: 1px solid #ccc;
+      border-radius: 6px; font-size: 14px;
+    }
+    form#slotForm button {
+      padding: 9px 14px; background: #2563eb; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer;
+    }
+    form#slotForm button:hover { background: #1d4ed8; }
+
+    #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9fafb; font-weight: 600; }
+    tr:hover { background: #f9fafb; }
+
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 10px;
+      font-size: 12px;
+    }
+    .badge-active { background: #dcfce7; color: #166534; }
+    .badge-inactive { background: #f3f4f6; color: #6b7280; }
+
+    .btn-edit {
+      padding: 4px 10px; background: #0891b2; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+      margin-right: 4px;
+    }
+    .btn-del {
+      padding: 4px 10px; background: #dc2626; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
+
+      <header>
+        <h1>Manage Teaching Time Slots</h1>
+        <span id="countLabel" style="font-size:13px;color:#666;"></span>
+      </header>
+
+      <div class="panel" id="formPanel" style="display:none;">
+        <h2 id="formTitle">Add Time Slot</h2>
+        <form id="slotForm">
+          <input id="slot_label" placeholder="Slot (e.g., 08:30-10:00)" required />
+          <input id="sort_order" type="number" placeholder="Sort order" value="0" />
+          <select id="is_active">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+          <button type="submit" id="formSubmitBtn">Save Slot</button>
+        </form>
+        <p id="formMsg"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Time Slot Directory</h2>
+        <p id="accessMsg" style="font-size:13px;color:#888;"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Sort Order</th>
+              <th>Status</th>
+              <th id="actionCol">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="slotTable"></tbody>
+        </table>
+      </div>
+
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
