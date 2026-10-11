@@ -16,12 +16,16 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 SLOTS = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
+    "08:30-09:20",
+    "09:30-10:20",
+    "10:30-11:20",
+    "11:30-12:20",
+    "12:30-13:20",
+    "13:30-14:20",
+    "14:30-15:20",
+    "15:30-16:20",
+    "16:30-17:20",
+    "17:30-18:20",
 ]
 
 def today_abbrev():
@@ -50,6 +54,8 @@ def _score_schedule(entries):
             if len(slots) < 2:
                 continue
             idxs = sorted(SLOTS.index(s) for s in slots if s in SLOTS)
+            if len(idxs) < 2:
+                continue
             span = idxs[-1] - idxs[0] + 1
             total += (span - len(idxs))
         return min(total * 15, 100)
