@@ -23,19 +23,43 @@
     .panel h2 { margin-top: 0; font-size: 16px; }
 
     form#semesterForm {
-      display: grid; gap: 10px;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      align-items: end;
+      display: grid; gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      align-items: start;
+    }
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
     form#semesterForm input {
-      padding: 8px 10px; border: 1px solid #ccc;
-      border-radius: 6px; font-size: 14px;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+    }
+    form#semesterForm input.input-error {
+      border: 2px solid #dc2626;
     }
     form#semesterForm button {
-      padding: 9px 14px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer;
+      padding: 9px 14px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      height: 38px;
+      align-self: start;
     }
     form#semesterForm button:hover { background: #1d4ed8; }
+
+    .field-msg {
+      color: #dc2626;
+      font-size: 12px;
+      min-height: 16px;
+    }
 
     #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
 
@@ -82,12 +106,26 @@
 
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Semester</h2>
-        <form id="semesterForm">
-          <input id="name" placeholder="Semester name (e.g., 2026 Fall)" required />
-          <input id="start_date" type="date" required />
-          <input id="end_date" type="date" required />
+
+        <form id="semesterForm" novalidate>
+          <div class="form-field">
+            <input id="name" placeholder="Semester name (e.g., 2026 Fall)" />
+            <div class="field-msg" id="nameMsg"></div>
+          </div>
+
+          <div class="form-field">
+            <input id="start_date" type="date" />
+            <div class="field-msg" id="start_dateMsg"></div>
+          </div>
+
+          <div class="form-field">
+            <input id="end_date" type="date" />
+            <div class="field-msg" id="end_dateMsg"></div>
+          </div>
+
           <button type="submit" id="formSubmitBtn">Save Semester</button>
         </form>
+
         <p id="formMsg"></p>
       </div>
 

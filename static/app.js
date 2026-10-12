@@ -260,6 +260,108 @@ function highlightField(id) {
 let editingRoomId = null;
 let isAdmin = false;
 
+// ---------- Room field validators ----------
+function validateRoomField(fieldId) {
+  const el = document.getElementById(fieldId);
+  const msg = document.getElementById(fieldId + "Msg");
+  if (!el || !msg) return true;
+
+  const v = el.value.trim();
+  let err = "";
+
+  if (fieldId === "building" && !v) err = "Building is required.";
+  if (fieldId === "room_code" && !v) err = "Room code is required.";
+  if (fieldId === "capacity") {
+    if (!v) err = "Capacity is required.";
+    else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1) err = "Capacity must be a positive integer.";
+    }
+  }
+  if (fieldId === "room_type" && !v) err = "Room type is required.";
+
+  msg.textContent = err;
+  if (err) { el.classList.add("input-error"); return false; }
+  el.classList.remove("input-error");
+  return true;
+}
+
+
+// ---------- Teacher field validators ----------
+function validateTeacherField(fieldId) {
+  const el = document.getElementById(fieldId);
+  const msg = document.getElementById(fieldId + "Msg");
+  if (!el || !msg) return true;
+
+  const v = el.value.trim();
+  let err = "";
+
+  if (fieldId === "full_name" && !v) err = "Full name is required.";
+  if (fieldId === "email") {
+    if (!v) err = "Email is required.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) err = "Enter a valid email address.";
+  }
+  if (fieldId === "department" && !v) err = "Department is required.";
+  if (fieldId === "max_weekly_hours") {
+    if (!v) err = "Max weekly hours is required.";
+    else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1 || n > 40) err = "Max weekly hours must be between 1 and 40.";
+    }
+  }
+  if (fieldId === "max_daily_hours") {
+    if (!v) err = "Max daily hours is required.";
+    else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1 || n > 12) err = "Max daily hours must be between 1 and 12.";
+    }
+  }
+
+  msg.textContent = err;
+  if (err) { el.classList.add("input-error"); return false; }
+  el.classList.remove("input-error");
+  return true;
+}
+
+
+// ---------- Course field validators ----------
+function validateCourseField(fieldId) {
+  const el = document.getElementById(fieldId);
+  const msg = document.getElementById(fieldId + "Msg");
+  if (!el || !msg) return true;
+
+  const v = el.value.trim();
+  let err = "";
+
+  if (fieldId === "course_code" && !v) err = "Course code is required.";
+  if (fieldId === "course_name" && !v) err = "Course name is required.";
+  if (fieldId === "credits") {
+    if (!v) err = "Credits is required.";
+    else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1 || n > 30) err = "Credits must be between 1 and 30.";
+    }
+  }
+  if (fieldId === "total_hours") {
+    if (!v) err = "Total hours is required.";
+    else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1 || n > 20) err = "Total hours must be between 1 and 20.";
+    }
+  }
+  if (["lecture_hours", "practice_hours", "lab_hours"].includes(fieldId)) {
+    if (v) {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 0 || n > 20) err = "Must be between 0 and 20.";
+    }
+  }
+
+  msg.textContent = err;
+  if (err) { el.classList.add("input-error"); return false; }
+  el.classList.remove("input-error");
+  return true;
+}
+
 async function initRoomsPage() {
   const table = document.getElementById("roomTable");
   if (!table) return;
@@ -303,16 +405,35 @@ async function initRoomsPage() {
 
   const form = document.getElementById("roomForm");
   if (form) {
+    // ★★★ 新增：实时验证 ★★★
+    ["building", "room_code", "capacity", "room_type"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        validateRoomField(id);
+        const fm = document.getElementById("formMsg");
+        if (fm) fm.textContent = "";
+      });
+      el.addEventListener("change", () => validateRoomField(id));
+    });
+
+    // ---------- 提交 ----------
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const msg = document.getElementById("formMsg");
       msg.textContent = "";
 
+      const okB = validateRoomField("building");
+      const okC = validateRoomField("room_code");
+      const okCap = validateRoomField("capacity");
+      const okT = validateRoomField("room_type");
+      if (!okB || !okC || !okCap || !okT) return;
+
       const payload = {
         campus: document.getElementById("campus").value.trim() || null,
         building: document.getElementById("building").value.trim(),
         room_code: document.getElementById("room_code").value.trim(),
-        capacity: parseInt(document.getElementById("capacity").value, 10),
+        capacity: parseInt(document.getElementById("capacity").value.trim(), 10),
         room_type: document.getElementById("room_type").value,
         equipment: document.getElementById("equipment").value.trim() || null,
       };
@@ -331,10 +452,13 @@ async function initRoomsPage() {
       const data = await r.json();
 
       if (!r.ok) {
-        msg.style.color = "#dc2626";
-        msg.textContent = data.detail || "Failed";
-        if ((data.detail || "").toLowerCase().includes("already exists")) {
-          highlightField("room_code");
+        const detail = data.detail || "Failed";
+        if (detail.toLowerCase().includes("already exists")) {
+          document.getElementById("room_codeMsg").textContent = detail;
+          document.getElementById("room_code").classList.add("input-error");
+        } else {
+          msg.style.color = "#dc2626";
+          msg.textContent = detail;
         }
         return;
       }
@@ -348,6 +472,12 @@ async function initRoomsPage() {
       document.getElementById("formSubmitBtn").textContent = "Save Room";
       document.getElementById("formTitle").textContent = "Add Room";
       form.reset();
+      ["building", "room_code", "capacity", "room_type"].forEach(id => {
+        const m = document.getElementById(id + "Msg");
+        if (m) m.textContent = "";
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("input-error");
+      });
       loadRooms();
     });
   }
@@ -480,18 +610,35 @@ async function initTeachersPage() {
 
   const form = document.getElementById("teacherForm");
   if (form) {
+    // Real-time validation
+    ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const evt = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(evt, () => {
+        validateTeacherField(id);
+        const fm = document.getElementById("formMsg");
+        if (fm) fm.textContent = "";
+      });
+    });
+
+    // Submit
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const msg = document.getElementById("formMsg");
       msg.textContent = "";
+
+      const fields = ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"];
+      const ok = fields.every(f => validateTeacherField(f));
+      if (!ok) return;
 
       const payload = {
         full_name: document.getElementById("full_name").value.trim(),
         email: document.getElementById("email").value.trim(),
         academic_title: document.getElementById("academic_title").value.trim() || null,
         department: document.getElementById("department").value.trim(),
-        max_weekly_hours: parseInt(document.getElementById("max_weekly_hours").value, 10),
-        max_daily_hours: parseInt(document.getElementById("max_daily_hours").value, 10),
+        max_weekly_hours: parseInt(document.getElementById("max_weekly_hours").value.trim(), 10),
+        max_daily_hours: parseInt(document.getElementById("max_daily_hours").value.trim(), 10),
         qualified_subjects: document.getElementById("qualified_subjects").value.trim() || null,
       };
 
@@ -509,24 +656,13 @@ async function initTeachersPage() {
       const data = await r.json();
 
       if (!r.ok) {
-        msg.style.color = "#dc2626";
-
-        if (r.status === 422 && Array.isArray(data.detail)) {
-          const field = data.detail[0].loc[data.detail[0].loc.length - 1];
-          if (field === "max_weekly_hours") {
-            msg.textContent = "Maximum teaching hours cannot exceed 40 hours per week";
-            highlightField("max_weekly_hours");
-          } else if (field === "max_daily_hours") {
-            msg.textContent = "Maximum daily hours must be between 1 and 12";
-            highlightField("max_daily_hours");
-          } else {
-            msg.textContent = data.detail[0].msg;
-          }
+        const detail = data.detail || "Failed";
+        if (detail.toLowerCase().includes("email")) {
+          document.getElementById("emailMsg").textContent = detail;
+          document.getElementById("email").classList.add("input-error");
         } else {
-          msg.textContent = data.detail || "Failed";
-          if ((data.detail || "").toLowerCase().includes("email")) {
-            highlightField("email");
-          }
+          msg.style.color = "#dc2626";
+          msg.textContent = detail;
         }
         return;
       }
@@ -540,6 +676,14 @@ async function initTeachersPage() {
       document.getElementById("formSubmitBtn").textContent = "Save Faculty";
       document.getElementById("formTitle").textContent = "Add Faculty";
       form.reset();
+
+      fields.forEach(id => {
+        const m = document.getElementById(id + "Msg");
+        if (m) m.textContent = "";
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("input-error");
+      });
+
       loadTeachers();
     });
   }
@@ -672,50 +816,80 @@ async function initCoursesPage() {
     if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify curriculum.";
   }
 
-  // Load student groups into the checkbox list
+  // ---------- Load unique PROGRAMS as checkboxes ----------
   try {
     const groupsRes = await fetch(API + "/student-groups", {
       headers: { "Authorization": "Bearer " + token },
     });
     const groups = await groupsRes.json();
+
+    // 收集 program，按小写去重（避免 "Information System" 和 "Information Systems" 并存）
+    const seen = new Map();
+    groups.forEach(g => {
+      if (!g.program) return;
+      const key = g.program.trim().toLowerCase();
+      if (!seen.has(key)) seen.set(key, g.program.trim());
+    });
+    const programs = [...seen.values()].sort();
+
     const groupList = document.getElementById("groupList");
     if (groupList) {
-      groupList.innerHTML = groups.map(g => `
+      groupList.innerHTML = programs.map(p => `
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-          <input type="checkbox" class="group-check" value="${g.group_code}" />
-          ${g.group_code}
+          <input type="checkbox" class="group-check" value="${p}" />
+          ${p}
         </label>
       `).join("");
     }
   } catch (e) {
-    console.error("Failed to load student groups", e);
+    console.error("Failed to load programs", e);
   }
 
   const form = document.getElementById("courseForm");
   if (form) {
+    // Real-time validation
+    ["course_code", "course_name", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        validateCourseField(id);
+        const fm = document.getElementById("formMsg");
+        if (fm) fm.textContent = "";
+      });
+    });
+
+    // Submit
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const msg = document.getElementById("formMsg");
       msg.textContent = "";
 
+      const fields = ["course_code", "course_name", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"];
+      const ok = fields.every(f => validateCourseField(f));
+      if (!ok) return;
+
+      // Checkbox value: "Information Systems, Computer Science"
+      const selectedPrograms = Array.from(document.querySelectorAll(".group-check:checked"))
+        .map(cb => cb.value);
+
       const payload = {
         course_code: document.getElementById("course_code").value.trim(),
         course_name: document.getElementById("course_name").value.trim(),
-        credits: parseInt(document.getElementById("credits").value, 10),
+        credits: parseInt(document.getElementById("credits").value.trim(), 10),
         semester_level: document.getElementById("semester_level").value.trim() || null,
-        total_hours: parseInt(document.getElementById("total_hours").value, 10),
-        lecture_hours: parseInt(document.getElementById("lecture_hours").value, 10),
-        practice_hours: parseInt(document.getElementById("practice_hours").value, 10),
-        lab_hours: parseInt(document.getElementById("lab_hours").value, 10),
-        target_groups: Array.from(document.querySelectorAll(".group-check:checked"))
-          .map(cb => cb.value).join(", ") || null,
-        department: document.getElementById("department").value.trim() || null,
+        total_hours: parseInt(document.getElementById("total_hours").value.trim(), 10),
+        lecture_hours: parseInt(document.getElementById("lecture_hours").value.trim() || "0", 10),
+        practice_hours: parseInt(document.getElementById("practice_hours").value.trim() || "0", 10),
+        lab_hours: parseInt(document.getElementById("lab_hours").value.trim() || "0", 10),
+        target_groups: selectedPrograms.join(", ") || null,
+        department: document.getElementById("department").value || null,
       };
 
+      // Cross-field: hours sum must equal total
       const sum = payload.lecture_hours + payload.practice_hours + payload.lab_hours;
       if (sum !== payload.total_hours) {
         msg.style.color = "#dc2626";
-        msg.textContent = `Total session hours (${sum}) exceed course credit limit (${payload.total_hours})`;
+        msg.textContent = `Total session hours (${sum}) do not match Total Hours (${payload.total_hours}).`;
         ["lecture_hours", "practice_hours", "lab_hours", "total_hours"].forEach(highlightField);
         return;
       }
@@ -737,9 +911,6 @@ async function initCoursesPage() {
         msg.style.color = "#dc2626";
         const detail = data.detail || "Failed";
         msg.textContent = detail;
-        if (detail.toLowerCase().includes("hour") || detail.toLowerCase().includes("exceed")) {
-          ["lecture_hours", "practice_hours", "lab_hours", "total_hours"].forEach(highlightField);
-        }
         if (detail.toLowerCase().includes("code")) {
           highlightField("course_code");
         }
@@ -755,6 +926,15 @@ async function initCoursesPage() {
       document.getElementById("formSubmitBtn").textContent = "Save Course";
       document.getElementById("formTitle").textContent = "Add Course";
       form.reset();
+
+      fields.forEach(id => {
+        const m = document.getElementById(id + "Msg");
+        if (m) m.textContent = "";
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("input-error");
+      });
+      document.querySelectorAll(".group-check").forEach(cb => cb.checked = false);
+
       loadCourses();
     });
   }
@@ -822,7 +1002,7 @@ async function editCourse(id) {
   document.getElementById("lab_hours").value = c.lab_hours;
   document.getElementById("department").value = c.department || "";
 
-  // Re-check the target groups
+  // Restore checkbox state from comma-separated program list
   document.querySelectorAll(".group-check").forEach(cb => cb.checked = false);
   if (c.target_groups) {
     const selected = c.target_groups.split(",").map(s => s.trim());
@@ -2248,6 +2428,37 @@ function renderFitResults(data) {
 let editingSemesterId = null;
 let semesterIsAdmin = false;
 
+// ---------- Semester field validators ----------
+function validateSemesterField(fieldId) {
+  const inputEl = document.getElementById(fieldId);
+  const msgEl = document.getElementById(fieldId + "Msg");
+  if (!inputEl || !msgEl) return true;
+
+  const value = inputEl.value.trim();
+  let errorMsg = "";
+
+  if (fieldId === "name") {
+    if (!value) {
+      errorMsg = "Semester name is required.";
+    }
+  } else if (fieldId === "start_date" || fieldId === "end_date") {
+    if (!value) {
+      errorMsg = fieldId === "start_date" ? "Start date is required." : "End date is required.";
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      errorMsg = "Date must be in format YYYY-MM-DD (e.g., 2026-09-01).";
+    }
+  }
+
+  msgEl.textContent = errorMsg;
+  if (errorMsg) {
+    inputEl.classList.add("input-error");
+    return false;
+  }
+  inputEl.classList.remove("input-error");
+  return true;
+}
+
+
 async function initSemestersPage() {
   const table = document.getElementById("semesterTable");
   if (!table) return;
@@ -2283,23 +2494,43 @@ async function initSemestersPage() {
   }
 
   const form = document.getElementById("semesterForm");
+
+  // Live validation
+  ["name", "start_date", "end_date"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      validateSemesterField(id);
+      const fm = document.getElementById("formMsg");
+      if (fm) fm.textContent = "";
+    });
+  });
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const msg = document.getElementById("formMsg");
-    msg.textContent = "";
 
-    const payload = {
-      name: document.getElementById("name").value.trim(),
-      start_date: document.getElementById("start_date").value,
-      end_date: document.getElementById("end_date").value,
-    };
+    const formMsg = document.getElementById("formMsg");
+    formMsg.textContent = "";
 
-    // Client-side validation
-    if (payload.start_date >= payload.end_date) {
-      msg.style.color = "#dc2626";
-      msg.textContent = "Start date must be before end date.";
+    // Validate all fields
+    const okName = validateSemesterField("name");
+    const okStart = validateSemesterField("start_date");
+    const okEnd = validateSemesterField("end_date");
+    if (!okName || !okStart || !okEnd) return;
+
+    const name = document.getElementById("name").value.trim();
+    const start_date = document.getElementById("start_date").value.trim();
+    const end_date = document.getElementById("end_date").value.trim();
+
+    // Cross-field check
+    if (start_date >= end_date) {
+      document.getElementById("end_dateMsg").textContent =
+        "End date must be after start date.";
+      document.getElementById("end_date").classList.add("input-error");
       return;
     }
+
+    const payload = { name, start_date, end_date };
 
     const url = editingSemesterId
       ? API + "/semesters/" + editingSemesterId
@@ -2317,13 +2548,23 @@ async function initSemestersPage() {
     const data = await r.json();
 
     if (!r.ok) {
-      msg.style.color = "#dc2626";
-      msg.textContent = data.detail || "Failed";
+      const detail = data.detail || "Failed";
+
+      if (detail.toLowerCase().includes("name")) {
+        document.getElementById("nameMsg").textContent = detail;
+        document.getElementById("name").classList.add("input-error");
+      } else if (detail.toLowerCase().includes("date")) {
+        document.getElementById("start_dateMsg").textContent = detail;
+        document.getElementById("start_date").classList.add("input-error");
+      } else {
+        formMsg.style.color = "#dc2626";
+        formMsg.textContent = detail;
+      }
       return;
     }
 
-    msg.style.color = "#16a34a";
-    msg.textContent = editingSemesterId
+    formMsg.style.color = "#16a34a";
+    formMsg.textContent = editingSemesterId
       ? "Semester updated successfully"
       : "Semester created successfully";
 
@@ -2331,6 +2572,14 @@ async function initSemestersPage() {
     document.getElementById("formSubmitBtn").textContent = "Save Semester";
     document.getElementById("formTitle").textContent = "Add Semester";
     form.reset();
+
+    ["name", "start_date", "end_date"].forEach((id) => {
+      const msgEl = document.getElementById(id + "Msg");
+      if (msgEl) msgEl.textContent = "";
+      const inputEl = document.getElementById(id);
+      if (inputEl) inputEl.classList.remove("input-error");
+    });
+
     loadSemesters();
   });
 
@@ -2438,6 +2687,71 @@ async function deleteSemester(id) {
 let editingGroupId = null;
 let groupIsAdmin = false;
 
+let departmentsCache = [];
+
+function onDepartmentChange() {
+  const deptName = document.getElementById("department").value;
+  const progSel = document.getElementById("program");
+  const dept = departmentsCache.find(d => d.name === deptName);
+
+  if (!dept) {
+    progSel.innerHTML = `<option value="">-- Select program --</option>`;
+    return;
+  }
+
+  progSel.innerHTML = `<option value="">-- Select program --</option>` +
+    dept.programs.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
+}
+
+function validateGroupField(fieldId) {
+  const inputEl = document.getElementById(fieldId);
+  const msgEl = document.getElementById(fieldId + "Msg");
+  if (!inputEl || !msgEl) return true;
+
+  const value = inputEl.value.trim();
+  let errorMsg = "";
+
+  if (fieldId === "group_code") {
+    if (!value) {
+      errorMsg = "Group code is required.";
+    } else if (!/^(IS|CS)-[1-4]-[A-Z]$/.test(value)) {
+      errorMsg = "Format must be like IS-1-A or CS-3-B (2 letters, digit 1-4, one letter).";
+    }
+  } else if (fieldId === "department") {
+    if (!value) {
+      errorMsg = "Please select a department.";
+    }
+  } else if (fieldId === "program") {
+    if (!value) {
+      errorMsg = "Please select a program.";
+    }
+  } else if (fieldId === "year") {
+    if (value) {
+      const y = parseInt(value, 10);
+      if (isNaN(y) || y < 1 || y > 6) {
+        errorMsg = "Year must be a number between 1 and 6.";
+      }
+    }
+  } else if (fieldId === "student_count") {
+    if (!value) {
+      errorMsg = "Student count is required.";
+    } else {
+      const c = parseInt(value, 10);
+      if (isNaN(c) || c < 1 || c > 25) {
+        errorMsg = "Student count must be between 1 and 25.";
+      }
+    }
+  }
+
+  msgEl.textContent = errorMsg;
+  if (errorMsg) {
+    inputEl.classList.add("input-error");
+    return false;
+  }
+  inputEl.classList.remove("input-error");
+  return true;
+}
+
 async function initStudentGroupsPage() {
   const table = document.getElementById("groupTable");
   if (!table) return;
@@ -2472,17 +2786,70 @@ async function initStudentGroupsPage() {
     accessMsg.textContent = "Read-only. Only admins can modify student groups.";
   }
 
+  // ---------- Load departments with nested programs ----------
+  try {
+    const deptRes = await fetch(API + "/student-groups/departments", {
+      headers: { "Authorization": "Bearer " + token },
+    });
+    if (deptRes.ok) {
+      departmentsCache = await deptRes.json();
+
+      const deptSel = document.getElementById("department");
+      if (deptSel) {
+        deptSel.innerHTML = `<option value="">-- Select department --</option>` +
+          departmentsCache.map(d => `<option value="${d.name}">${d.name}</option>`).join("");
+      }
+
+      const progSel = document.getElementById("program");
+      if (progSel) {
+        progSel.innerHTML = `<option value="">-- Select program --</option>`;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load departments", e);
+  }
+
   const form = document.getElementById("groupForm");
+
+  // ---------- Live validation ----------
+  ["group_code", "department", "program", "year", "student_count"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const evt = el.tagName === "SELECT" ? "change" : "input";
+    el.addEventListener(evt, () => {
+      validateGroupField(id);
+      const fm = document.getElementById("formMsg");
+      if (fm) fm.textContent = "";
+    });
+  });
+
+  // ---------- Submit ----------
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const msg = document.getElementById("formMsg");
-    msg.textContent = "";
+
+    const formMsg = document.getElementById("formMsg");
+    formMsg.textContent = "";
+
+    const okCode = validateGroupField("group_code");
+    const okDept = validateGroupField("department");
+    const okProgram = validateGroupField("program");
+    const okYear = validateGroupField("year");
+    const okCount = validateGroupField("student_count");
+    if (!okCode || !okDept || !okProgram || !okYear || !okCount) return;
+
+    const groupCode = document.getElementById("group_code").value.trim();
+    const program = document.getElementById("program").value;
+    const yearStr = document.getElementById("year").value.trim();
+    const studentCountStr = document.getElementById("student_count").value.trim();
+
+    const year = yearStr ? parseInt(yearStr, 10) : null;
+    const student_count = parseInt(studentCountStr, 10);
 
     const payload = {
-      group_code: document.getElementById("group_code").value.trim(),
-      program: document.getElementById("program").value.trim() || null,
-      year: parseInt(document.getElementById("year").value, 10) || null,
-      student_count: parseInt(document.getElementById("student_count").value, 10) || 0,
+      group_code: groupCode,
+      program: program || null,
+      year: year,
+      student_count: student_count,
     };
 
     const url = editingGroupId
@@ -2501,13 +2868,19 @@ async function initStudentGroupsPage() {
     const data = await r.json();
 
     if (!r.ok) {
-      msg.style.color = "#dc2626";
-      msg.textContent = data.detail || "Failed";
+      const detail = data.detail || "Failed";
+      if (detail.toLowerCase().includes("group code")) {
+        document.getElementById("group_codeMsg").textContent = detail;
+        document.getElementById("group_code").classList.add("input-error");
+      } else {
+        formMsg.style.color = "#dc2626";
+        formMsg.textContent = detail;
+      }
       return;
     }
 
-    msg.style.color = "#16a34a";
-    msg.textContent = editingGroupId
+    formMsg.style.color = "#16a34a";
+    formMsg.textContent = editingGroupId
       ? "Student group updated"
       : "Student group created";
 
@@ -2515,6 +2888,17 @@ async function initStudentGroupsPage() {
     document.getElementById("formSubmitBtn").textContent = "Save Group";
     document.getElementById("formTitle").textContent = "Add Student Group";
     form.reset();
+
+    ["group_code", "department", "program", "year", "student_count"].forEach((id) => {
+      const msgEl = document.getElementById(id + "Msg");
+      if (msgEl) msgEl.textContent = "";
+      const inputEl = document.getElementById(id);
+      if (inputEl) inputEl.classList.remove("input-error");
+    });
+
+    // Reset program dropdown
+    onDepartmentChange();
+
     loadStudentGroups();
   });
 
@@ -2529,16 +2913,15 @@ async function loadStudentGroups() {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="5">Failed to load groups</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6">Failed to load groups</td></tr>`;
     return;
   }
   const groups = await res.json();
 
-  document.getElementById("countLabel").textContent =
-    `${groups.length} group(s)`;
+  document.getElementById("countLabel").textContent = `${groups.length} group(s)`;
 
   if (groups.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No groups yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:#888;">No groups yet.</td></tr>`;
     return;
   }
 
@@ -2546,6 +2929,7 @@ async function loadStudentGroups() {
     <tr>
       <td><b>${g.group_code}</b></td>
       <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
+      <td>${g.department ? `<span class="badge-dept">${g.department}</span>` : "-"}</td>
       <td>${g.year ?? "-"}</td>
       <td>${g.student_count}</td>
       ${groupIsAdmin ? `
@@ -2568,9 +2952,17 @@ async function editGroup(id) {
   if (!g) return;
 
   document.getElementById("group_code").value = g.group_code;
-  document.getElementById("program").value = g.program || "";
   document.getElementById("year").value = g.year || "";
   document.getElementById("student_count").value = g.student_count;
+
+  // Find the department this program belongs to
+  const progName = g.program;
+  const dept = departmentsCache.find(d =>
+    d.programs.some(p => p.name === progName)
+  );
+  document.getElementById("department").value = dept ? dept.name : "";
+  onDepartmentChange();
+  document.getElementById("program").value = progName || "";
 
   editingGroupId = id;
   document.getElementById("formTitle").textContent = "Edit Student Group";
@@ -2610,6 +3002,42 @@ function filterGroups() {
 let editingSlotId = null;
 let slotIsAdmin = false;
 
+// ---------- Time Slot field validators ----------
+function validateSlotField(fieldId) {
+  const inputEl = document.getElementById(fieldId);
+  const msgEl = document.getElementById(fieldId + "Msg");
+  if (!inputEl || !msgEl) return true;
+
+  const value = inputEl.value.trim();
+  let errorMsg = "";
+
+  if (fieldId === "slot_label") {
+    if (!value) {
+      errorMsg = "Slot label is required.";
+    } else if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(value)) {
+      errorMsg = "Format must be HH:MM-HH:MM (e.g., 08:30-09:20).";
+    }
+  } else if (fieldId === "sort_order") {
+    if (!value) {
+      errorMsg = "Sort order is required.";
+    } else {
+      const n = parseInt(value, 10);
+      if (isNaN(n) || n < 1 || n > 10) {
+        errorMsg = "Sort order must be between 1 and 10.";
+      }
+    }
+  }
+
+  msgEl.textContent = errorMsg;
+  if (errorMsg) {
+    inputEl.classList.add("input-error");
+    return false;
+  }
+  inputEl.classList.remove("input-error");
+  return true;
+}
+
+
 async function initTimeSlotsPage() {
   const table = document.getElementById("slotTable");
   if (!table) return;
@@ -2645,14 +3073,32 @@ async function initTimeSlotsPage() {
   }
 
   const form = document.getElementById("slotForm");
+
+  // Live validation
+  ["slot_label", "sort_order"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      validateSlotField(id);
+      const fm = document.getElementById("formMsg");
+      if (fm) fm.textContent = "";
+    });
+  });
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+
     const msg = document.getElementById("formMsg");
     msg.textContent = "";
 
+    // Validate
+    const okLabel = validateSlotField("slot_label");
+    const okSort = validateSlotField("sort_order");
+    if (!okLabel || !okSort) return;
+
     const payload = {
       slot_label: document.getElementById("slot_label").value.trim(),
-      sort_order: parseInt(document.getElementById("sort_order").value, 10) || 0,
+      sort_order: parseInt(document.getElementById("sort_order").value.trim(), 10),
       is_active: document.getElementById("is_active").value === "true",
     };
 
@@ -2672,20 +3118,37 @@ async function initTimeSlotsPage() {
     const data = await r.json();
 
     if (!r.ok) {
-      msg.style.color = "#dc2626";
-      msg.textContent = data.detail || "Failed";
+      const detail = data.detail || "Failed";
+
+      // Map server error to the right field
+      if (detail.toLowerCase().includes("sort order")) {
+        document.getElementById("sort_orderMsg").textContent = detail;
+        document.getElementById("sort_order").classList.add("input-error");
+      } else if (detail.toLowerCase().includes("time slot") || detail.toLowerCase().includes("format") || detail.toLowerCase().includes("minute")) {
+        document.getElementById("slot_labelMsg").textContent = detail;
+        document.getElementById("slot_label").classList.add("input-error");
+      } else {
+        msg.style.color = "#dc2626";
+        msg.textContent = detail;
+      }
       return;
     }
 
     msg.style.color = "#16a34a";
-    msg.textContent = editingSlotId
-      ? "Time slot updated"
-      : "Time slot created";
+    msg.textContent = editingSlotId ? "Time slot updated" : "Time slot created";
 
     editingSlotId = null;
     document.getElementById("formSubmitBtn").textContent = "Save Slot";
     document.getElementById("formTitle").textContent = "Add Time Slot";
     form.reset();
+
+    ["slot_label", "sort_order"].forEach((id) => {
+      const msgEl = document.getElementById(id + "Msg");
+      if (msgEl) msgEl.textContent = "";
+      const inputEl = document.getElementById(id);
+      if (inputEl) inputEl.classList.remove("input-error");
+    });
+
     loadTimeSlots();
   });
 
@@ -2713,7 +3176,7 @@ async function loadTimeSlots() {
   }
 
   tbody.innerHTML = slots.map(s => `
-    <tr>
+    <tr data-slot-id="${s.id}">
       <td><b>${s.slot_label}</b></td>
       <td>${s.sort_order}</td>
       <td>
@@ -2766,6 +3229,382 @@ async function deleteSlot(id) {
 }
 
 
+async function checkTimeSlotConsistency() {
+  const resultEl = document.getElementById("checkResult");
+  const listEl = document.getElementById("issueList");
+
+  resultEl.textContent = "Checking...";
+  resultEl.style.color = "#666";
+  resultEl.style.fontWeight = "normal";
+  listEl.style.display = "none";
+  listEl.innerHTML = "";
+
+  // Clear old highlights
+  document.querySelectorAll("#slotTable tr").forEach(tr => {
+    tr.classList.remove("row-error");
+  });
+
+  const res = await fetch(API + "/time-slots/validate", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+
+  if (!res.ok) {
+    resultEl.style.color = "#dc2626";
+    resultEl.textContent = "Failed to validate";
+    return;
+  }
+
+  const data = await res.json();
+
+  // Highlight bad rows
+  data.bad_slot_ids.forEach(id => {
+    const row = document.querySelector(`#slotTable tr[data-slot-id="${id}"]`);
+    if (row) row.classList.add("row-error");
+  });
+
+  if (data.is_valid) {
+    resultEl.style.color = "#16a34a";
+    resultEl.style.fontWeight = "600";
+    resultEl.textContent = `✓ Consistent`;
+    listEl.style.display = "block";
+    listEl.innerHTML = `
+      <div class="issue-card ok">
+        <div class="icon">✓</div>
+        <div class="body">
+          <span class="type-tag">ok</span>
+          <span class="msg">All ${data.total_active_slots} active time slots are consistent.</span>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  resultEl.style.color = "#dc2626";
+  resultEl.style.fontWeight = "600";
+  resultEl.textContent = `✗ ${data.issues.length} issue${data.issues.length > 1 ? "s" : ""} found`;
+
+  listEl.style.display = "block";
+  listEl.innerHTML = data.issues.map(i => {
+    const iconMap = {
+      overlap: "⛔",
+      duplicate_sort: "🔁",
+      order_mismatch: "↕",
+      invalid_format: "⚠",
+    };
+    const icon = iconMap[i.type] || "⚠";
+    return `
+      <div class="issue-card">
+        <div class="icon">${icon}</div>
+        <div class="body">
+          <span class="type-tag">${i.type.replace("_", " ")}</span>
+          <span class="msg">${i.message}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+
+// ============================================================
+// Global UI helpers
+// ============================================================
+
+let confirmResolver = null;
+
+function showConfirm(title, text, confirmLabel = "Delete") {
+  return new Promise((resolve) => {
+    document.getElementById("confirmTitle").textContent = title;
+    document.getElementById("confirmText").textContent = text;
+    document.getElementById("confirmBtn").textContent = confirmLabel;
+    document.getElementById("confirmModal").style.display = "flex";
+    confirmResolver = resolve;
+  });
+}
+
+function closeConfirm(result) {
+  document.getElementById("confirmModal").style.display = "none";
+  if (confirmResolver) {
+    confirmResolver(result);
+    confirmResolver = null;
+  }
+}
+
+function showNotice(message, type = "info") {
+  const el = document.getElementById("pageNotice");
+  if (!el) return;
+
+  const colors = {
+    info:    { bg: "#dbeafe", color: "#1e40af" },
+    success: { bg: "#dcfce7", color: "#166534" },
+    error:   { bg: "#fee2e2", color: "#991b1b" },
+  };
+  const c = colors[type] || colors.info;
+
+  el.textContent = message;
+  el.style.background = c.bg;
+  el.style.color = c.color;
+  el.style.display = "block";
+
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => {
+    el.style.display = "none";
+  }, 3000);
+}
+
+
+// ============================================================
+// Manage Programs
+// ============================================================
+
+let editingProgramId = null;
+let programIsAdmin = false;
+
+function validateProgramField(fieldId) {
+  const el = document.getElementById(fieldId);
+  const msgEl = document.getElementById(fieldId + "Msg");
+  if (!el || !msgEl) return true;
+
+  const value = el.value.trim();
+  let errorMsg = "";
+
+  if (fieldId === "program_code") {
+    if (!value) {
+      errorMsg = "Program code is required.";
+    } else if (!/^\d{4}$/.test(value)) {
+      errorMsg = "Program code must be 4 digits (e.g., 0105).";
+    }
+  } else if (fieldId === "program_name") {
+    if (!value) {
+      errorMsg = "Program name is required.";
+    }
+  } else if (fieldId === "department_id") {
+    if (!value) {
+      errorMsg = "Please select a department.";
+    }
+  }
+
+  msgEl.textContent = errorMsg;
+  if (errorMsg) {
+    el.classList.add("input-error");
+    return false;
+  }
+  el.classList.remove("input-error");
+  return true;
+}
+
+
+async function initProgramsPage() {
+  const table = document.getElementById("programTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const meRes = await fetch(API + "/auth/me", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!meRes.ok) {
+    localStorage.clear();
+    window.location.href = "/login.html";
+    return;
+  }
+  const me = await meRes.json();
+  programIsAdmin = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (programIsAdmin) {
+    formPanel.style.display = "block";
+    accessMsg.textContent = "";
+  } else {
+    formPanel.style.display = "none";
+    actionCol.style.display = "none";
+    accessMsg.textContent = "Read-only. Only admins can modify programs.";
+  }
+
+  // Load departments
+  try {
+    const deptRes = await fetch(API + "/programs/departments", {
+      headers: { "Authorization": "Bearer " + token },
+    });
+    if (deptRes.ok) {
+      const depts = await deptRes.json();
+      const sel = document.getElementById("department_id");
+      if (sel) {
+        sel.innerHTML = `<option value="">-- Select department --</option>` +
+          depts.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load departments", e);
+  }
+
+  const form = document.getElementById("programForm");
+
+  // Live validation
+  ["program_code", "program_name", "department_id"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const evt = el.tagName === "SELECT" ? "change" : "input";
+    el.addEventListener(evt, () => {
+      validateProgramField(id);
+      const fm = document.getElementById("formMsg");
+      if (fm) fm.textContent = "";
+    });
+  });
+
+  // Submit
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const formMsg = document.getElementById("formMsg");
+    formMsg.textContent = "";
+
+    const okCode = validateProgramField("program_code");
+    const okName = validateProgramField("program_name");
+    const okDept = validateProgramField("department_id");
+    if (!okCode || !okName || !okDept) return;
+
+    const payload = {
+      program_code: document.getElementById("program_code").value.trim(),
+      program_name: document.getElementById("program_name").value.trim(),
+      department_id: parseInt(document.getElementById("department_id").value, 10),
+    };
+
+    const url = editingProgramId
+      ? API + "/programs/" + editingProgramId
+      : API + "/programs";
+    const method = editingProgramId ? "PUT" : "POST";
+
+    const r = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + getToken(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      const detail = data.detail || "Failed";
+      if (detail.toLowerCase().includes("code")) {
+        document.getElementById("program_codeMsg").textContent = detail;
+        document.getElementById("program_code").classList.add("input-error");
+      } else if (detail.toLowerCase().includes("name")) {
+        document.getElementById("program_nameMsg").textContent = detail;
+        document.getElementById("program_name").classList.add("input-error");
+      } else {
+        formMsg.style.color = "#dc2626";
+        formMsg.textContent = detail;
+      }
+      return;
+    }
+
+    formMsg.style.color = "#16a34a";
+    formMsg.textContent = editingProgramId ? "Program updated" : "Program created";
+    showNotice(editingProgramId ? "Program updated" : "Program created", "success");
+
+    editingProgramId = null;
+    document.getElementById("formSubmitBtn").textContent = "Save Program";
+    document.getElementById("formTitle").textContent = "Add Program";
+    form.reset();
+
+    ["program_code", "program_name", "department_id"].forEach((id) => {
+      const msgEl = document.getElementById(id + "Msg");
+      if (msgEl) msgEl.textContent = "";
+      const inputEl = document.getElementById(id);
+      if (inputEl) inputEl.classList.remove("input-error");
+    });
+
+    loadPrograms();
+  });
+
+  loadPrograms();
+}
+
+
+async function loadPrograms() {
+  const tbody = document.getElementById("programTable");
+  if (!tbody) return;
+
+  const res = await fetch(API + "/programs", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) {
+    tbody.innerHTML = `<tr><td colspan="5">Failed to load programs</td></tr>`;
+    return;
+  }
+  const programs = await res.json();
+
+  document.getElementById("countLabel").textContent = `${programs.length} program(s)`;
+
+  if (programs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No programs yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = programs.map(p => `
+    <tr>
+      <td><span class="badge-code">${p.program_code}</span></td>
+      <td><b>${p.program_name}</b></td>
+      <td><span class="badge-dept">${p.department_name || "-"}</span></td>
+      <td>${p.group_count}</td>
+      ${programIsAdmin ? `
+        <td>
+          <button class="btn-edit" onclick="editProgram(${p.id})">Edit</button>
+          <button class="btn-del" onclick="deleteProgram(${p.id})">Delete</button>
+        </td>
+      ` : `<td></td>`}
+    </tr>
+  `).join("");
+}
+
+
+async function editProgram(id) {
+  const res = await fetch(API + "/programs", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+  const p = list.find(x => x.id === id);
+  if (!p) return;
+
+  document.getElementById("program_code").value = p.program_code;
+  document.getElementById("program_name").value = p.program_name;
+  document.getElementById("department_id").value = p.department_id;
+
+  editingProgramId = id;
+  document.getElementById("formTitle").textContent = "Edit Program";
+  document.getElementById("formSubmitBtn").textContent = "Update Program";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+
+async function deleteProgram(id) {
+  const ok = await showConfirm(
+    "Delete Program",
+    "Are you sure you want to delete this program? This cannot be undone."
+  );
+  if (!ok) return;
+
+  const res = await fetch(API + "/programs/" + id, {
+    method: "DELETE",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    showNotice(data.detail || "Delete failed", "error");
+    return;
+  }
+  showNotice("Program deleted", "success");
+  loadPrograms();
+}
+
 // ============================================================
 // Shared Sidebar
 // ============================================================
@@ -2779,6 +3618,7 @@ const SIDEBAR_ITEMS = [
   { href: "/courses.html",          label: "Manage Curriculum",     roles: ["admin"],                       sprint: 1 },
 
   // ---- Sprint 2 ----
+  { href: "/programs.html",         label: "Manage Programs",       roles: ["admin"],                       sprint: 2 },
   { href: "/semesters.html",        label: "Manage Semesters",      roles: ["admin"],                       sprint: 2 },
   { href: "/student-groups.html",   label: "Manage Student Groups", roles: ["admin"],                       sprint: 2 },
   { href: "/time-slots.html",       label: "Manage Time Slots",     roles: ["admin"],                       sprint: 2 },
@@ -2907,4 +3747,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initRoomFittingPage();
   initSemestersPage();
   initTimeSlotsPage();
+  initProgramsPage();
 });

@@ -3,7 +3,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from db.database import get_db
-from db.models import Course, User, StudentGroup
+from db.models import (
+    Course, User, Program, Department, course_target_programs
+)
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
 
@@ -19,11 +21,30 @@ class CourseRequest(BaseModel):
     lecture_hours: int = Field(ge=0, le=20)
     practice_hours: int = Field(ge=0, le=20)
     lab_hours: int = Field(ge=0, le=20)
-    target_groups: str | None = None
-    department: str | None = None
+    target_groups: str | None = None     # comma-separated PROGRAM names
+    department: str | None = None        # department name (string)
 
 
-def course_to_dict(c: Course):
+def get_course_target_groups(db: Session, course_id: int) -> str | None:
+    """Return comma-separated program names for a course."""
+    rows = db.execute(
+        course_target_programs.select().where(
+            course_target_programs.c.course_id == course_id
+        )
+    ).fetchall()
+    if not rows:
+        return None
+    prog_ids = [r.program_id for r in rows]
+    programs = db.query(Program).filter(Program.id.in_(prog_ids)).all()
+    return ", ".join(sorted(p.program_name for p in programs)) or None
+
+
+def course_to_dict(db: Session, c: Course):
+    dept = None
+    if c.department_id:
+        d = db.query(Department).filter_by(id=c.department_id).first()
+        dept = d.name if d else None
+
     return {
         "id": c.id,
         "course_code": c.course_code,
@@ -34,8 +55,8 @@ def course_to_dict(c: Course):
         "lecture_hours": c.lecture_hours,
         "practice_hours": c.practice_hours,
         "lab_hours": c.lab_hours,
-        "target_groups": c.target_groups,
-        "department": c.department,
+        "target_groups": get_course_target_groups(db, c.id),
+        "department": dept,
     }
 
 
@@ -44,29 +65,50 @@ def validate_hours(data: CourseRequest):
     if total != data.total_hours:
         raise HTTPException(
             status_code=400,
-            detail=f"Total session hours ({total}) exceed course credit limit ({data.total_hours}). "
-                   f"Lecture + Practice + Lab must equal Total Hours."
+            detail=(
+                f"Total session hours ({total}) do not match Total Hours "
+                f"({data.total_hours}). Lecture + Practice + Lab must equal Total."
+            ),
         )
 
-def validate_target_groups(db: Session, target_groups: str | None):
-    if not target_groups:
+
+def save_target_groups(db: Session, course_id: int, target_str: str | None):
+    """Clear and re-insert course_target_programs rows."""
+    # Clear old
+    db.execute(
+        course_target_programs.delete().where(
+            course_target_programs.c.course_id == course_id
+        )
+    )
+
+    if not target_str:
+        db.commit()
         return
-    codes = [c.strip() for c in target_groups.split(",") if c.strip()]
-    existing = {g.group_code for g in db.query(StudentGroup).all()}
-    missing = [c for c in codes if c not in existing]
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Target student group(s) not found in registry: {', '.join(missing)}",
-        )
 
+    names = [n.strip() for n in target_str.split(",") if n.strip()]
+    for name in names:
+        p = db.query(Program).filter_by(program_name=name).first()
+        if not p:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target program not found: {name}",
+            )
+        db.execute(
+            course_target_programs.insert().values(
+                course_id=course_id, program_id=p.id
+            )
+        )
+    db.commit()
+
+
+# ---------- Routes ----------
 @router.get("")
 def list_courses(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     courses = db.query(Course).order_by(Course.course_code).all()
-    return [course_to_dict(c) for c in courses]
+    return [course_to_dict(db, c) for c in courses]
 
 
 @router.post("")
@@ -79,7 +121,11 @@ def create_course(
         raise HTTPException(status_code=400, detail="Course code already exists")
 
     validate_hours(data)
-    validate_target_groups(db, data.target_groups)
+
+    dept_id = None
+    if data.department:
+        d = db.query(Department).filter_by(name=data.department).first()
+        dept_id = d.id if d else None
 
     course = Course(
         course_code=data.course_code,
@@ -90,15 +136,16 @@ def create_course(
         lecture_hours=data.lecture_hours,
         practice_hours=data.practice_hours,
         lab_hours=data.lab_hours,
-        target_groups=data.target_groups,
-        department=data.department,
+        department_id=dept_id,
     )
     db.add(course)
     db.commit()
     db.refresh(course)
 
+    save_target_groups(db, course.id, data.target_groups)
+
     log_event(db, admin.id, "course_created", True, data.course_code)
-    return course_to_dict(course)
+    return course_to_dict(db, course)
 
 
 @router.put("/{course_id}")
@@ -120,7 +167,11 @@ def update_course(
         raise HTTPException(status_code=400, detail="Course code already exists")
 
     validate_hours(data)
-    validate_target_groups(db, data.target_groups)
+
+    dept_id = None
+    if data.department:
+        d = db.query(Department).filter_by(name=data.department).first()
+        dept_id = d.id if d else None
 
     course.course_code = data.course_code
     course.course_name = data.course_name
@@ -130,13 +181,14 @@ def update_course(
     course.lecture_hours = data.lecture_hours
     course.practice_hours = data.practice_hours
     course.lab_hours = data.lab_hours
-    course.target_groups = data.target_groups
-    course.department = data.department
-
+    course.department_id = dept_id
     db.commit()
     db.refresh(course)
+
+    save_target_groups(db, course.id, data.target_groups)
+
     log_event(db, admin.id, "course_updated", True, f"course_id={course_id}")
-    return course_to_dict(course)
+    return course_to_dict(db, course)
 
 
 @router.delete("/{course_id}")
@@ -149,7 +201,14 @@ def delete_course(
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
+    # Remove program links first
+    db.execute(
+        course_target_programs.delete().where(
+            course_target_programs.c.course_id == course_id
+        )
+    )
     db.delete(course)
     db.commit()
+
     log_event(db, admin.id, "course_deleted", True, f"course_id={course_id}")
     return {"message": "Course deleted"}

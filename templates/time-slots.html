@@ -22,20 +22,47 @@
     }
     .panel h2 { margin-top: 0; font-size: 16px; }
 
+    /* ---- form layout ---- */
     form#slotForm {
-      display: grid; gap: 10px;
+      display: grid;
+      gap: 12px;
       grid-template-columns: 2fr 1fr 1fr auto;
-      align-items: end;
+      align-items: start;
     }
-    form#slotForm input, form#slotForm select {
-      padding: 8px 10px; border: 1px solid #ccc;
-      border-radius: 6px; font-size: 14px;
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    form#slotForm input,
+    form#slotForm select {
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+    }
+    form#slotForm input.input-error {
+      border: 2px solid #dc2626;
     }
     form#slotForm button {
-      padding: 9px 14px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer;
+      padding: 9px 14px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      height: 38px;
+      align-self: start;
     }
     form#slotForm button:hover { background: #1d4ed8; }
+
+    .field-msg {
+      color: #dc2626;
+      font-size: 12px;
+      min-height: 16px;
+    }
 
     #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
 
@@ -60,6 +87,105 @@
       padding: 4px 10px; background: #dc2626; color: #fff;
       border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
     }
+
+    /* ---- Highlight problematic rows ---- */
+    tr.row-error {
+      background: #fef2f2 !important;
+      box-shadow: inset 4px 0 0 #dc2626;
+    }
+    tr.row-error td {
+      color: #991b1b;
+      font-weight: 500;
+    }
+    tr.row-error td:first-child::before {
+      content: "⚠ ";
+      color: #dc2626;
+    }
+
+    /* ---- Check button ---- */
+    .check-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .btn-check {
+      padding: 8px 16px;
+      background: #059669;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .btn-check:hover { background: #047857; }
+
+    #checkResult {
+      font-size: 13px;
+      color: #666;
+      font-weight: 500;
+    }
+
+    /* ---- Issue cards ---- */
+    .issue-card {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      border-radius: 10px;
+      background: #fef2f2;
+      border-left: 4px solid #dc2626;
+      animation: fadeIn 0.25s ease;
+    }
+    .issue-card .icon {
+      font-size: 18px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .issue-card .body {
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #7f1d1d;
+    }
+    .issue-card .type-tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fecaca;
+      color: #991b1b;
+      margin-right: 8px;
+    }
+    .issue-card .msg {
+      color: #7f1d1d;
+    }
+
+    .issue-card.ok {
+      background: #f0fdf4;
+      border-left-color: #16a34a;
+    }
+    .issue-card.ok .body { color: #166534; }
+    .issue-card.ok .type-tag {
+      background: #bbf7d0;
+      color: #166534;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Monospace slot labels for easier reading */
+    #slotTable td:first-child {
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -74,21 +200,46 @@
 
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Time Slot</h2>
-        <form id="slotForm">
-          <input id="slot_label" placeholder="Slot (e.g., 08:30-10:00)" required />
-          <input id="sort_order" type="number" placeholder="Sort order" value="0" />
-          <select id="is_active">
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
-          </select>
+
+        <form id="slotForm" novalidate>
+
+          <div class="form-field">
+            <input id="slot_label" placeholder="Slot (e.g., 08:30-09:20)" />
+            <div class="field-msg" id="slot_labelMsg"></div>
+          </div>
+
+          <div class="form-field">
+            <input id="sort_order" type="text" inputmode="numeric" placeholder="Sort order (1-10)" />
+            <div class="field-msg" id="sort_orderMsg"></div>
+          </div>
+
+          <div class="form-field">
+            <select id="is_active">
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+            <div class="field-msg" id="is_activeMsg"></div>
+          </div>
+
           <button type="submit" id="formSubmitBtn">Save Slot</button>
         </form>
+
         <p id="formMsg"></p>
       </div>
 
       <div class="panel">
         <h2>Time Slot Directory</h2>
         <p id="accessMsg" style="font-size:13px;color:#888;"></p>
+
+        <div class="check-bar">
+          <button class="btn-check" onclick="checkTimeSlotConsistency()">
+            Check Consistency
+          </button>
+          <span id="checkResult"></span>
+        </div>
+
+        <div id="issueList" style="display:none;"></div>
+
         <table>
           <thead>
             <tr>

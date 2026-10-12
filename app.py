@@ -19,6 +19,8 @@ from routes.conflict_routes import router as conflict_router
 from routes.room_fitting_routes import router as room_fitting_router
 from routes.semester_routes import router as semester_router
 from routes.time_slot_routes import router as time_slot_router
+from routes.program_routes import router as program_router
+
 
 
 
@@ -49,6 +51,7 @@ app.include_router(conflict_router)
 app.include_router(room_fitting_router)
 app.include_router(semester_router)
 app.include_router(time_slot_router)
+app.include_router(program_router)
 
 
 
@@ -114,3 +117,7 @@ def student_groups_page():
 @app.get("/time-slots.html")
 def time_slots_page():
     return FileResponse("templates/time-slots.html")
+
+@app.get("/programs.html")
+def programs_page():
+    return FileResponse("templates/programs.html")
