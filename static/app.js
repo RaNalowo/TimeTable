@@ -544,17 +544,22 @@ async function editRoom(id) {
 }
 
 async function deleteRoom(id) {
-  if (!confirm("Delete this room?")) return;
+  const ok = await showConfirm(
+    "Delete Room",
+    "Are you sure you want to delete this room? This cannot be undone."
+  );
+  if (!ok) return;
 
   const res = await fetch(API + "/rooms/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
+  const data = await res.json();
   if (!res.ok) {
-    const data = await res.json();
-    alert(data.detail || "Delete failed");
+    showNotice(data.detail || "Delete failed", "error");
     return;
   }
+  showNotice("Room deleted", "success");
   loadRooms();
 }
 
@@ -752,17 +757,22 @@ async function editTeacher(id) {
 }
 
 async function deleteTeacher(id) {
-  if (!confirm("Delete this faculty profile?")) return;
+  const ok = await showConfirm(
+    "Delete Faculty Profile",
+    "Are you sure you want to delete this faculty profile? This cannot be undone."
+  );
+  if (!ok) return;
 
   const res = await fetch(API + "/teachers/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
+  const data = await res.json();
   if (!res.ok) {
-    const data = await res.json();
-    alert(data.detail || "Delete failed");
+    showNotice(data.detail || "Delete failed", "error");
     return;
   }
+  showNotice("Faculty deleted", "success");
   loadTeachers();
 }
 
@@ -1018,17 +1028,22 @@ async function editCourse(id) {
 }
 
 async function deleteCourse(id) {
-  if (!confirm("Delete this course?")) return;
+  const ok = await showConfirm(
+    "Delete Course",
+    "Are you sure you want to delete this course? This cannot be undone."
+  );
+  if (!ok) return;
 
   const res = await fetch(API + "/courses/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
+  const data = await res.json();
   if (!res.ok) {
-    const data = await res.json();
-    alert(data.detail || "Delete failed");
+    showNotice(data.detail || "Delete failed", "error");
     return;
   }
+  showNotice("Course deleted", "success");
   loadCourses();
 }
 
@@ -2697,7 +2712,11 @@ async function activateSemester(id) {
 }
 
 async function deleteSemester(id) {
-  if (!confirm("Delete this semester? This action cannot be undone.")) return;
+  const ok = await showConfirm(
+    "Delete Semester",
+    "Are you sure you want to delete this semester? This cannot be undone."
+  );
+  if (!ok) return;
 
   const res = await fetch(API + "/semesters/" + id, {
     method: "DELETE",
@@ -2705,9 +2724,10 @@ async function deleteSemester(id) {
   });
   const data = await res.json();
   if (!res.ok) {
-    alert(data.detail || "Delete failed");
+    showNotice(data.detail || "Delete failed", "error");
     return;
   }
+  showNotice("Semester deleted", "success");
   loadSemesters();
 }
 
@@ -2745,8 +2765,8 @@ function validateGroupField(fieldId) {
   if (fieldId === "group_code") {
     if (!value) {
       errorMsg = "Group code is required.";
-    } else if (!/^(IS|CS)-[1-4]-[A-Z]$/.test(value)) {
-      errorMsg = "Format must be like IS-1-A or CS-3-B (2 letters, digit 1-4, one letter).";
+    } else if (!/^(IS|CS)-\d{2}-[A-Z]$/.test(value)) {
+      errorMsg = "Format must be like IS-23-A or CS-24-B (2 letters, 2-digit year, 1 letter).";
     }
   } else if (fieldId === "department") {
     if (!value) {
@@ -2756,11 +2776,11 @@ function validateGroupField(fieldId) {
     if (!value) {
       errorMsg = "Please select a program.";
     }
-  } else if (fieldId === "year") {
+  } else if (fieldId === "year_override") {
     if (value) {
       const y = parseInt(value, 10);
-      if (isNaN(y) || y < 1 || y > 6) {
-        errorMsg = "Year must be a number between 1 and 6.";
+      if (isNaN(y) || y < 1 || y > 10) {
+        errorMsg = "Year override must be between 1 and 10 (leave empty to auto-calculate).";
       }
     }
   } else if (fieldId === "student_count") {
@@ -2817,7 +2837,7 @@ async function initStudentGroupsPage() {
     accessMsg.textContent = "Read-only. Only admins can modify student groups.";
   }
 
-  // ---------- Load departments with nested programs ----------
+  // ---------- Load departments and their nested programs ----------
   try {
     const deptRes = await fetch(API + "/student-groups/departments", {
       headers: { "Authorization": "Bearer " + token },
@@ -2843,7 +2863,7 @@ async function initStudentGroupsPage() {
   const form = document.getElementById("groupForm");
 
   // ---------- Live validation ----------
-  ["group_code", "department", "program", "year", "student_count"].forEach((id) => {
+  ["group_code", "department", "program", "year_override", "student_count"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     const evt = el.tagName === "SELECT" ? "change" : "input";
@@ -2861,28 +2881,33 @@ async function initStudentGroupsPage() {
     const formMsg = document.getElementById("formMsg");
     formMsg.textContent = "";
 
+    // Validate all fields
     const okCode = validateGroupField("group_code");
     const okDept = validateGroupField("department");
     const okProgram = validateGroupField("program");
-    const okYear = validateGroupField("year");
+    const okYear = validateGroupField("year_override");
     const okCount = validateGroupField("student_count");
     if (!okCode || !okDept || !okProgram || !okYear || !okCount) return;
 
     const groupCode = document.getElementById("group_code").value.trim();
     const program = document.getElementById("program").value;
-    const yearStr = document.getElementById("year").value.trim();
+    const yearOverrideStr = document.getElementById("year_override").value.trim();
     const studentCountStr = document.getElementById("student_count").value.trim();
 
-    const year = yearStr ? parseInt(yearStr, 10) : null;
-    const student_count = parseInt(studentCountStr, 10);
-
+    // Auto-derive enrollment year from group_code: "IS-23-A" → 2023
     const parts = groupCode.split("-");
-    const enrollment_year = parts.length >= 2 ? 2000 + parseInt(parts[1], 10) : null;
+    const enrollment_year = parts.length >= 2
+      ? 2000 + parseInt(parts[1], 10)
+      : null;
+
+    const year_override = yearOverrideStr ? parseInt(yearOverrideStr, 10) : null;
+    const student_count = parseInt(studentCountStr, 10);
 
     const payload = {
       group_code: groupCode,
       program: program || null,
       enrollment_year: enrollment_year,
+      year_override: year_override,
       student_count: student_count,
     };
 
@@ -2923,7 +2948,8 @@ async function initStudentGroupsPage() {
     document.getElementById("formTitle").textContent = "Add Student Group";
     form.reset();
 
-    ["group_code", "department", "program", "year", "student_count"].forEach((id) => {
+    // Clear all error states
+    ["group_code", "department", "program", "year_override", "student_count"].forEach((id) => {
       const msgEl = document.getElementById(id + "Msg");
       if (msgEl) msgEl.textContent = "";
       const inputEl = document.getElementById(id);
@@ -2960,7 +2986,11 @@ async function loadStudentGroups() {
   }
 
   tbody.innerHTML = groups.map(g => {
-    const currentYear = g.current_year ? `Year ${g.current_year}` : "-";
+    let currentYear = g.current_year ? `Year ${g.current_year}` : "-";
+    if (g.year_override) {
+      currentYear += ` <span style="color:#dc2626;font-size:11px;">(override)</span>`;
+    }
+
     return `
       <tr>
         <td><b>${g.group_code}</b></td>
@@ -2979,6 +3009,27 @@ async function loadStudentGroups() {
     `;
   }).join("");
 }
+
+async function deleteGroup(id) {
+  const ok = await showConfirm(
+    "Delete Student Group",
+    "Are you sure you want to delete this group? This cannot be undone."
+  );
+  if (!ok) return;
+
+  const res = await fetch(API + "/student-groups/" + id, {
+    method: "DELETE",
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    showNotice(data.detail || "Delete failed", "error");
+    return;
+  }
+  showNotice("Student group deleted", "success");
+  loadStudentGroups();
+}
+
 async function editGroup(id) {
   const res = await fetch(API + "/student-groups", {
     headers: { "Authorization": "Bearer " + getToken() },
@@ -2989,10 +3040,10 @@ async function editGroup(id) {
   if (!g) return;
 
   document.getElementById("group_code").value = g.group_code;
-  document.getElementById("year").value = g.current_year || "";
   document.getElementById("student_count").value = g.student_count;
+  document.getElementById("year_override").value = g.year_override || "";
 
-  // Find the department this program belongs to
+  // Pick the department this program belongs to
   const progName = g.program;
   const dept = departmentsCache.find(d =>
     d.programs.some(p => p.name === progName)
@@ -3005,21 +3056,6 @@ async function editGroup(id) {
   document.getElementById("formTitle").textContent = "Edit Student Group";
   document.getElementById("formSubmitBtn").textContent = "Update Group";
   window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function deleteGroup(id) {
-  if (!confirm("Delete this student group? Courses using it will lose their target group.")) return;
-
-  const res = await fetch(API + "/student-groups/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    const data = await res.json();
-    alert(data.detail || "Delete failed");
-    return;
-  }
-  loadStudentGroups();
 }
 
 function filterGroups() {
@@ -3251,17 +3287,22 @@ async function editSlot(id) {
 }
 
 async function deleteSlot(id) {
-  if (!confirm("Delete this time slot?")) return;
+  const ok = await showConfirm(
+    "Delete Time Slot",
+    "Are you sure you want to delete this time slot? This cannot be undone."
+  );
+  if (!ok) return;
 
   const res = await fetch(API + "/time-slots/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
+  const data = await res.json();
   if (!res.ok) {
-    const data = await res.json();
-    alert(data.detail || "Delete failed");
+    showNotice(data.detail || "Delete failed", "error");
     return;
   }
+  showNotice("Time slot deleted", "success");
   loadTimeSlots();
 }
 
@@ -3340,7 +3381,6 @@ async function checkTimeSlotConsistency() {
     `;
   }).join("");
 }
-
 
 // ============================================================
 // Global UI helpers

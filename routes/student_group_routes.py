@@ -15,6 +15,7 @@ class StudentGroupRequest(BaseModel):
     group_code: str = Field(min_length=1)
     program: str | None = None
     enrollment_year: int | None = Field(default=None, ge=2000, le=2100)
+    year_override: int | None = Field(default=None, ge=1, le=10)
     student_count: int = Field(default=0, ge=0, le=500)
 
 
@@ -40,6 +41,7 @@ def group_to_dict(g: StudentGroup, db: Session):
         "program_id": g.program_id,
         "department": department_name,
         "enrollment_year": g.enrollment_year,
+        "year_override": g.year_override,
         "current_year": current_year,
         "student_count": g.student_count,
     }
@@ -103,6 +105,7 @@ def create_group(
         group_code=data.group_code,
         program_id=program_id,
         enrollment_year=data.enrollment_year,
+        year_override=data.year_override,
         student_count=data.student_count,
     )
     db.add(g)
@@ -140,6 +143,7 @@ def update_group(
     g.group_code = data.group_code
     g.program_id = program_id
     g.enrollment_year = data.enrollment_year
+    g.year_override = data.year_override
     g.student_count = data.student_count
     db.commit()
     db.refresh(g)

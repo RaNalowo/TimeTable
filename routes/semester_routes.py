@@ -50,6 +50,23 @@ def validate_dates(start: str, end: str):
         )
 
 
+def check_overlap(db: Session, start: str, end: str, exclude_id: int = None):
+    """
+    Return an existing semester whose date range overlaps with [start, end],
+    or None if no overlap.
+    """
+    q = db.query(Semester)
+    if exclude_id is not None:
+        q = q.filter(Semester.id != exclude_id)
+
+    for sem in q.all():
+        # Two date ranges overlap if:
+        #   new_start < existing_end  AND  new_end > existing_start
+        if start < sem.end_date and end > sem.start_date:
+            return sem
+    return None
+
+
 @router.get("")
 def list_semesters(
     user: User = Depends(get_current_user),
@@ -79,10 +96,22 @@ def create_semester(
     name = data.name.strip()
     validate_dates(data.start_date, data.end_date)
 
+    # Duplicate name check
     if db.query(Semester).filter_by(name=name).first():
         raise HTTPException(
             status_code=400,
             detail="A semester with this name already exists",
+        )
+
+    # Date overlap check
+    overlap = check_overlap(db, data.start_date, data.end_date)
+    if overlap:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Date range overlaps with existing semester "
+                f"'{overlap.name}' ({overlap.start_date} to {overlap.end_date})."
+            ),
         )
 
     sem = Semester(
@@ -115,6 +144,7 @@ def update_semester(
     name = data.name.strip()
     validate_dates(data.start_date, data.end_date)
 
+    # Duplicate name check (excluding self)
     dup = db.query(Semester).filter(
         Semester.name == name,
         Semester.id != semester_id,
@@ -123,6 +153,19 @@ def update_semester(
         raise HTTPException(
             status_code=400,
             detail="A semester with this name already exists",
+        )
+
+    # Date overlap check (excluding self)
+    overlap = check_overlap(
+        db, data.start_date, data.end_date, exclude_id=semester_id
+    )
+    if overlap:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Date range overlaps with existing semester "
+                f"'{overlap.name}' ({overlap.start_date} to {overlap.end_date})."
+            ),
         )
 
     sem.name = name

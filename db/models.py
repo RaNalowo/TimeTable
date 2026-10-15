@@ -128,7 +128,8 @@ class StudentGroup(Base):
     id = Column(Integer, primary_key=True, index=True)
     group_code = Column(String, unique=True, nullable=False, index=True)
     program_id = Column(Integer, ForeignKey("programs.id"), nullable=True)
-    enrollment_year = Column(Integer, nullable=True)   # ← 改这里（原来是 year）
+    enrollment_year = Column(Integer, nullable=True)
+    year_override = Column(Integer, nullable=True)   # ← 新增：手动覆盖年级
     student_count = Column(Integer, default=0)
 
     program = relationship("Program")

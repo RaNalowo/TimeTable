@@ -26,13 +26,17 @@ def current_year_for_group(group, semester):
     Fall:   year = academic_year - enrollment_year + 1
     Spring: year = academic_year - enrollment_year
     """
+    # If manually overridden (e.g., repeated a year), use that
+    if group.year_override:
+        return group.year_override
+
     if not group.enrollment_year or not semester:
         return None
 
     offset = semester.academic_year - group.enrollment_year
     if semester.term == "Fall":
         return offset + 1
-    else:  # Spring
+    else:
         return offset
 
 
