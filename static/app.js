@@ -2437,9 +2437,11 @@ function validateSemesterField(fieldId) {
   const value = inputEl.value.trim();
   let errorMsg = "";
 
-  if (fieldId === "name") {
+    if (fieldId === "name") {
     if (!value) {
       errorMsg = "Semester name is required.";
+    } else if (!/^(\d{4})\s+(Fall|Spring|Summer)$/i.test(value)) {
+      errorMsg = "Format must be like '2025 Fall' or '2026 Spring'.";
     }
   } else if (fieldId === "start_date" || fieldId === "end_date") {
     if (!value) {
@@ -2518,7 +2520,7 @@ async function initSemestersPage() {
     const okEnd = validateSemesterField("end_date");
     if (!okName || !okStart || !okEnd) return;
 
-    const name = document.getElementById("name").value.trim();
+        const name = document.getElementById("name").value.trim();
     const start_date = document.getElementById("start_date").value.trim();
     const end_date = document.getElementById("end_date").value.trim();
 
@@ -2530,7 +2532,24 @@ async function initSemestersPage() {
       return;
     }
 
-    const payload = { name, start_date, end_date };
+    // Parse name like "2025 Fall" → academic_year=2025, term="Fall"
+    const m = name.match(/^(\d{4})\s+(Fall|Spring|Summer)$/i);
+    if (!m) {
+      document.getElementById("nameMsg").textContent =
+        "Semester name must be like '2025 Fall' or '2026 Spring'.";
+      document.getElementById("name").classList.add("input-error");
+      return;
+    }
+    const academic_year = parseInt(m[1], 10);
+    const term = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
+
+    const payload = {
+      name,
+      academic_year,
+      term,
+      start_date,
+      end_date,
+    };
 
     const url = editingSemesterId
       ? API + "/semesters/" + editingSemesterId
@@ -2547,18 +2566,30 @@ async function initSemestersPage() {
     });
     const data = await r.json();
 
-    if (!r.ok) {
-      const detail = data.detail || "Failed";
-
-      if (detail.toLowerCase().includes("name")) {
-        document.getElementById("nameMsg").textContent = detail;
-        document.getElementById("name").classList.add("input-error");
-      } else if (detail.toLowerCase().includes("date")) {
-        document.getElementById("start_dateMsg").textContent = detail;
-        document.getElementById("start_date").classList.add("input-error");
+        if (!r.ok) {
+      // 422: FastAPI validation error
+      if (r.status === 422 && Array.isArray(data.detail)) {
+        const field = data.detail[0].loc[data.detail[0].loc.length - 1];
+        const map = {
+          "name": "nameMsg",
+          "academic_year": "nameMsg",
+          "term": "nameMsg",
+          "start_date": "start_dateMsg",
+          "end_date": "end_dateMsg",
+        };
+        const msgId = map[field] || "nameMsg";
+        const inputId = msgId.replace("Msg", "");
+        document.getElementById(msgId).textContent = data.detail[0].msg;
+        document.getElementById(inputId).classList.add("input-error");
       } else {
-        formMsg.style.color = "#dc2626";
-        formMsg.textContent = detail;
+        const detail = typeof data.detail === "string" ? data.detail : "Failed";
+        if (detail.toLowerCase().includes("name")) {
+          document.getElementById("nameMsg").textContent = detail;
+          document.getElementById("name").classList.add("input-error");
+        } else {
+          formMsg.style.color = "#dc2626";
+          formMsg.textContent = detail;
+        }
       }
       return;
     }
@@ -2845,10 +2876,13 @@ async function initStudentGroupsPage() {
     const year = yearStr ? parseInt(yearStr, 10) : null;
     const student_count = parseInt(studentCountStr, 10);
 
+    const parts = groupCode.split("-");
+    const enrollment_year = parts.length >= 2 ? 2000 + parseInt(parts[1], 10) : null;
+
     const payload = {
       group_code: groupCode,
       program: program || null,
-      year: year,
+      enrollment_year: enrollment_year,
       student_count: student_count,
     };
 
@@ -2913,7 +2947,7 @@ async function loadStudentGroups() {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="6">Failed to load groups</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7">Failed to load groups</td></tr>`;
     return;
   }
   const groups = await res.json();
@@ -2921,27 +2955,30 @@ async function loadStudentGroups() {
   document.getElementById("countLabel").textContent = `${groups.length} group(s)`;
 
   if (groups.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="color:#888;">No groups yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#888;">No groups yet.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = groups.map(g => `
-    <tr>
-      <td><b>${g.group_code}</b></td>
-      <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
-      <td>${g.department ? `<span class="badge-dept">${g.department}</span>` : "-"}</td>
-      <td>${g.year ?? "-"}</td>
-      <td>${g.student_count}</td>
-      ${groupIsAdmin ? `
-        <td>
-          <button class="btn-edit" onclick="editGroup(${g.id})">Edit</button>
-          <button class="btn-del" onclick="deleteGroup(${g.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
-    </tr>
-  `).join("");
+  tbody.innerHTML = groups.map(g => {
+    const currentYear = g.current_year ? `Year ${g.current_year}` : "-";
+    return `
+      <tr>
+        <td><b>${g.group_code}</b></td>
+        <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
+        <td>${g.department ? `<span class="badge-dept">${g.department}</span>` : "-"}</td>
+        <td>${g.enrollment_year || "-"}</td>
+        <td>${currentYear}</td>
+        <td>${g.student_count}</td>
+        ${groupIsAdmin ? `
+          <td>
+            <button class="btn-edit" onclick="editGroup(${g.id})">Edit</button>
+            <button class="btn-del" onclick="deleteGroup(${g.id})">Delete</button>
+          </td>
+        ` : `<td></td>`}
+      </tr>
+    `;
+  }).join("");
 }
-
 async function editGroup(id) {
   const res = await fetch(API + "/student-groups", {
     headers: { "Authorization": "Bearer " + getToken() },
@@ -2952,7 +2989,7 @@ async function editGroup(id) {
   if (!g) return;
 
   document.getElementById("group_code").value = g.group_code;
-  document.getElementById("year").value = g.year || "";
+  document.getElementById("year").value = g.current_year || "";
   document.getElementById("student_count").value = g.student_count;
 
   // Find the department this program belongs to

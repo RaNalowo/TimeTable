@@ -113,20 +113,30 @@ def _compute_live_score(db, entries):
 
 @router.get("/summary")
 def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from services.semester_logic import get_active_semester
+    from routes.conflict_routes import scan_conflicts
+
+    active = get_active_semester(db)
     roles = [r.name for r in user.roles]
     today = today_abbrev()
 
-    all_entries = db.query(ScheduleEntry).all()
+    # Only entries of the ACTIVE semester
+    if active:
+        all_entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
+    else:
+        all_entries = []
+
     total_sessions = len(all_entries)
 
-    # ----- common cards -----
+    # ---- common cards ----
     today_entries = [e for e in all_entries if e.day == today]
 
-    # Next lecture = 当天第一条
     next_room = "-"
     if today_entries:
-        # 按 time_slot 排序取第一条
-        today_sorted = sorted(today_entries, key=lambda e: SLOTS.index(e.time_slot) if e.time_slot in SLOTS else 99)
+        today_sorted = sorted(
+            today_entries,
+            key=lambda e: SLOTS.index(e.time_slot) if e.time_slot in SLOTS else 99,
+        )
         next_room = today_sorted[0].room_code or "-"
 
     # Timetable status
@@ -136,16 +146,16 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
         conflict_info = scan_conflicts(db)
         status = "Draft Ready" if conflict_info["error_count"] == 0 else "Has Conflicts"
 
-    # Active conflicts count
     conflict_info = scan_conflicts(db)
 
-    # Room utilization (used slots / total available)
     total_rooms = db.query(Room).count()
     total_slots = len(DAYS) * len(SLOTS) * max(total_rooms, 1)
-    used_slots = len(set((e.room_id, e.day, e.time_slot) for e in all_entries if e.room_id))
+    used_slots = len(set(
+        (e.room_id, e.day, e.time_slot)
+        for e in all_entries if e.room_id
+    ))
     utilization = round(used_slots / total_slots * 100, 1) if total_slots else 0
 
-    # Live score
     live = _compute_live_score(db, all_entries)
 
     base = {
@@ -159,7 +169,7 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
     cards = {
         "today_classes": len(today_entries),
         "next_room": next_room,
-        "pending_requests": 0,   # 补课模块未做，固定 0
+        "pending_requests": 0,
         "timetable_status": status,
     }
 
@@ -172,25 +182,24 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
             "active_conflicts": conflict_info["error_count"],
             "utilization": utilization,
         }
-
     elif "teacher" in roles:
         base["role"] = "teacher"
         base["cards"] = cards
-
-        # 用 email 找到对应教师
         teacher = db.query(Teacher).filter(Teacher.email == user.email).first()
         if teacher:
             teacher_entries = [e for e in all_entries if e.teacher_id == teacher.id]
-            weekly_hours = len(teacher_entries)
-            rooms = sorted(set(e.room_code for e in teacher_entries if e.room_code))
-            groups = set()
-            for e in teacher_entries:
-                for g in (e.target_groups or "").split(","):
-                    g = g.strip()
-                    if g:
-                        groups.add(g)
-
-            weekly_schedule = [
+        else:
+            teacher_entries = []
+        base["teacher"] = {
+            "weekly_hours": len(teacher_entries),
+            "rooms": sorted(set(e.room_code for e in teacher_entries if e.room_code)),
+            "groups": sorted(set(
+                g.strip()
+                for e in teacher_entries
+                for g in (e.target_groups or "").split(",")
+                if g.strip()
+            )),
+            "weekly_schedule": [
                 {
                     "day": e.day,
                     "time": e.time_slot,
@@ -198,51 +207,30 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
                     "room": e.room_code,
                     "group": e.target_groups,
                 }
-                for e in sorted(teacher_entries, key=lambda x: (DAYS.index(x.day) if x.day in DAYS else 99, SLOTS.index(x.time_slot) if x.time_slot in SLOTS else 99))
-            ]
-        else:
-            weekly_hours = 0
-            rooms = []
-            groups = []
-            weekly_schedule = []
-
-        base["teacher"] = {
-            "weekly_hours": weekly_hours,
-            "rooms": rooms,
-            "groups": list(groups),
-            "weekly_schedule": weekly_schedule,
+                for e in teacher_entries
+            ],
         }
-
     else:
-        # student — 用 student_id 或 email 找不到 group 时的兜底
         base["role"] = "student"
         base["cards"] = cards
-
-        today_schedule = [
-            {
-                "time": e.time_slot,
-                "course": e.course_code,
-                "room": e.room_code,
-                "teacher": e.teacher_name,
-            }
-            for e in sorted(today_entries, key=lambda x: SLOTS.index(x.time_slot) if x.time_slot in SLOTS else 99)
-        ]
-
-        # Next lecture
-        next_lecture = None
-        if today_schedule:
-            first = today_schedule[0]
-            next_lecture = {
-                "course": first["course"],
-                "time": first["time"],
-                "room": first["room"],
-            }
-
         base["student"] = {
-            "today_schedule": today_schedule,
-            "next_lecture": next_lecture or {
-                "course": "-", "time": "-", "room": "-"
-            },
+            "today_schedule": [
+                {
+                    "time": e.time_slot,
+                    "course": e.course_code,
+                    "room": e.room_code,
+                    "teacher": e.teacher_name,
+                }
+                for e in today_entries
+            ],
+            "next_lecture": (
+                {
+                    "course": today_entries[0].course_code,
+                    "time": today_entries[0].time_slot,
+                    "room": today_entries[0].room_code,
+                } if today_entries else
+                {"course": "-", "time": "-", "room": "-"}
+            ),
         }
 
     return base

@@ -95,24 +95,26 @@ PENALTY_FNS = {
 
 
 # ---------- Target group resolution ----------
-def resolve_target_groups(db, raw_groups, semester_level=None):
+def resolve_target_groups(db, raw_groups, course):
     """
-    Expand program names into concrete student groups.
+    Expand target_groups (program names or group codes) into
+    concrete student groups that are CURRENTLY eligible for the course.
 
-    If semester_level contains "Year N", only groups of that year
-    are matched (so a Year 1 course doesn't get assigned to Year 4).
+    A group is eligible only if:
+      1. Its current year (based on active semester) matches the course year
+      2. Its term (Fall/Spring) matches the course term
     """
-    import re
+    from services.semester_logic import (
+        get_active_semester, parse_semester_level,
+        current_year_for_group, group_matches_course,
+    )
+
+    active = get_active_semester(db)
+    if not active:
+        return []
 
     all_groups = db.query(StudentGroup).all()
     by_code = {g.group_code: g for g in all_groups}
-
-    # Extract target year (e.g. "Year 1 Fall" -> 1)
-    target_year = None
-    if semester_level:
-        m = re.search(r"Year\s*(\d)", semester_level)
-        if m:
-            target_year = int(m.group(1))
 
     resolved = []
     for token in raw_groups:
@@ -121,22 +123,18 @@ def resolve_target_groups(db, raw_groups, semester_level=None):
             continue
 
         if token in by_code:
-            resolved.append(token)
+            # Concrete group code
+            g = by_code[token]
+            if group_matches_course(g, course, active):
+                resolved.append(token)
         else:
-            matched = [
-                g.group_code for g in all_groups
-                if g.program == token
-                and (target_year is None or g.year == target_year)
-            ]
-            if matched:
-                resolved.extend(matched)
-            else:
-                # Fallback: same program, any year
-                fallback = [g.group_code for g in all_groups if g.program == token]
-                resolved.extend(fallback if fallback else [token])
+            # Program name → all matching groups
+            for g in all_groups:
+                if g.program and g.program.program_name == token:
+                    if group_matches_course(g, course, active):
+                        resolved.append(g.group_code)
 
     return sorted(set(resolved))
-
 
 # ---------- Helpers ----------
 def expand_sessions(courses, db):
@@ -149,7 +147,7 @@ def expand_sessions(courses, db):
 
     for c in courses:
         raw = [g.strip() for g in (c.target_groups or "").split(",") if g.strip()]
-        concrete_groups = resolve_target_groups(db, raw, c.semester_level)
+        concrete_groups = resolve_target_groups(db, raw, c)
 
         if not concrete_groups:
             continue
@@ -494,7 +492,17 @@ def run_generation(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
-    db.query(ScheduleEntry).delete()
+    from services.semester_logic import get_active_semester
+
+    active = get_active_semester(db)
+    if not active:
+        raise HTTPException(
+            status_code=400,
+            detail="No active semester. Please activate one first.",
+        )
+
+    # Only delete entries of the ACTIVE semester
+    db.query(ScheduleEntry).filter_by(semester_id=active.id).delete()
     db.commit()
 
     result = generate(db)
@@ -511,15 +519,10 @@ def run_generation(
             teacher_id=e["teacher_id"],
             teacher_name=e["teacher_name"],
             target_groups=e["target_groups"],
+            semester_id=active.id,            # ← 加这行
         ))
     db.commit()
-
-    log_event(
-        db, admin.id, "timetable_generated", True,
-        f"placed={result['placed_count']} failed={result['failed_count']} score={result['score']}"
-    )
-
-    return result
+    ...
 
 
 @router.get("/entries")
@@ -527,7 +530,14 @@ def list_entries(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    entries = db.query(ScheduleEntry).all()
+    from services.semester_logic import get_active_semester
+    active = get_active_semester(db)
+
+    if active:
+        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
+    else:
+        entries = []
+
     return [
         {
             "id": e.id,
@@ -538,6 +548,7 @@ def list_entries(
             "room_code": e.room_code,
             "teacher_name": e.teacher_name,
             "target_groups": e.target_groups,
+            "semester_id": e.semester_id,
         }
         for e in entries
     ]

@@ -14,6 +14,8 @@ router = APIRouter(prefix="/semesters", tags=["semesters"])
 
 class SemesterRequest(BaseModel):
     name: str = Field(min_length=1, max_length=50)
+    academic_year: int = Field(ge=2000, le=2100)
+    term: str = Field(min_length=1, max_length=20)
     start_date: str
     end_date: str
 
@@ -22,6 +24,8 @@ def semester_to_dict(s: Semester):
     return {
         "id": s.id,
         "name": s.name,
+        "academic_year": s.academic_year,
+        "term": s.term,
         "start_date": s.start_date,
         "end_date": s.end_date,
         "is_active": s.is_active,
@@ -83,6 +87,8 @@ def create_semester(
 
     sem = Semester(
         name=name,
+        academic_year=data.academic_year,
+        term=data.term,
         start_date=data.start_date,
         end_date=data.end_date,
         is_active=False,
@@ -120,6 +126,8 @@ def update_semester(
         )
 
     sem.name = name
+    sem.academic_year = data.academic_year
+    sem.term = data.term
     sem.start_date = data.start_date
     sem.end_date = data.end_date
     db.commit()
@@ -139,7 +147,6 @@ def activate_semester(
     if not sem:
         raise HTTPException(status_code=404, detail="Semester not found")
 
-    # Deactivate all others
     db.query(Semester).update({Semester.is_active: False})
     sem.is_active = True
     db.commit()

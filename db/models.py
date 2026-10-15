@@ -124,10 +124,11 @@ class Teacher(Base):
 
 class StudentGroup(Base):
     __tablename__ = "student_groups"
+
     id = Column(Integer, primary_key=True, index=True)
     group_code = Column(String, unique=True, nullable=False, index=True)
     program_id = Column(Integer, ForeignKey("programs.id"), nullable=True)
-    year = Column(Integer, nullable=True)
+    enrollment_year = Column(Integer, nullable=True)   # ← 改这里（原来是 year）
     student_count = Column(Integer, default=0)
 
     program = relationship("Program")
@@ -164,8 +165,11 @@ course_target_programs = Table(
 
 class Semester(Base):
     __tablename__ = "semesters"
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
+    academic_year = Column(Integer, nullable=False)    # ← 加：2026
+    term = Column(String, nullable=False)              # ← 加：Fall / Spring
     start_date = Column(String, nullable=False)
     end_date = Column(String, nullable=False)
     is_active = Column(Boolean, default=False)

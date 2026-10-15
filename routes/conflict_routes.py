@@ -37,7 +37,14 @@ def _rooms(db):
 
 
 def scan_conflicts(db):
-    entries = db.query(ScheduleEntry).all()
+    from services.semester_logic import get_active_semester
+    active = get_active_semester(db)
+
+    if active:
+        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
+    else:
+        entries = []
+
     rooms = _rooms(db)
     group_sizes = _group_sizes(db)
 
@@ -207,9 +214,18 @@ def grid(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return schedule entries grouped by day and time slot."""
+    """Return schedule entries grouped by day and time slot (active semester only)."""
+    from services.semester_logic import get_active_semester
+    active = get_active_semester(db)
+
     SLOTS = get_active_slots(db)
-    entries = db.query(ScheduleEntry).all()
+
+    # Only load entries of the ACTIVE semester
+    if active:
+        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
+    else:
+        entries = []
+
     conflict_info = scan_conflicts(db)
     conflicting_ids = set(conflict_info["conflicting_entry_ids"])
 

@@ -159,7 +159,7 @@ def load_groups_from_csv(path="student_groups.csv"):
             db.add(StudentGroup(
                 group_code=code,
                 program_id=program_id,
-                year=int(row["year"]) if row.get("year") else None,
+                enrollment_year=int(row["enrollment_year"]) if row.get("enrollment_year") else None,
                 student_count=int(row["student_count"]) if row.get("student_count") else 0,
             ))
     db.commit()
@@ -260,10 +260,12 @@ load_courses_from_csv()
 
 if db.query(Semester).count() == 0:
     db.add_all([
-        Semester(name="2026 Fall", start_date="2026-09-01",
-                 end_date="2026-12-20", is_active=True),
-        Semester(name="2027 Spring", start_date="2027-01-15",
-                 end_date="2027-05-30", is_active=False),
+        Semester(name="2026 Fall", academic_year=2026, term="Fall",
+                 start_date="2026-09-01", end_date="2026-12-20",
+                 is_active=True),
+        Semester(name="2027 Spring", academic_year=2027, term="Spring",
+                 start_date="2027-01-15", end_date="2027-05-30",
+                 is_active=False),
     ])
     db.commit()
     print("Seeded 2 semesters")
@@ -365,11 +367,11 @@ if not db.query(User).filter_by(email="admin@sdu.edu.kz").first():
 
 # 5 Students
 STUDENTS = [
-    ("230103191", "IS-4-A", "Aibek Nurlan"),
-    ("230103192", "IS-4-B", "Dana Bekova"),
-    ("230103193", "IS-4-C", "Arman Serikov"),
-    ("240103101", "IS-3-A", "Aigerim Zhumabek"),
-    ("240103102", "IS-3-B", "Dias Tolegenov"),
+    ("230103191", "IS-23-A", "Aibek Nurlan"),
+    ("230103192", "IS-23-B", "Dana Bekova"),
+    ("230103193", "IS-23-C", "Arman Serikov"),
+    ("240103101", "IS-24-A", "Aigerim Zhumabek"),
+    ("240103102", "IS-24-B", "Dias Tolegenov"),
 ]
 
 student_role = db.query(Role).filter_by(name="student").first()

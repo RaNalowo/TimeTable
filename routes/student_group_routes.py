@@ -6,6 +6,7 @@ from db.database import get_db
 from db.models import StudentGroup, User, Program, Department
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.semester_logic import get_active_semester, current_year_for_group
 
 router = APIRouter(prefix="/student-groups", tags=["student-groups"])
 
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/student-groups", tags=["student-groups"])
 class StudentGroupRequest(BaseModel):
     group_code: str = Field(min_length=1)
     program: str | None = None
-    year: int | None = Field(default=None, ge=1, le=6)
+    enrollment_year: int | None = Field(default=None, ge=2000, le=2100)
     student_count: int = Field(default=0, ge=0, le=500)
 
 
@@ -29,13 +30,17 @@ def group_to_dict(g: StudentGroup, db: Session):
                 d = db.query(Department).filter_by(id=p.department_id).first()
                 department_name = d.name if d else None
 
+    active = get_active_semester(db)
+    current_year = current_year_for_group(g, active) if active else None
+
     return {
         "id": g.id,
         "group_code": g.group_code,
         "program": program_name,
         "program_id": g.program_id,
         "department": department_name,
-        "year": g.year,
+        "enrollment_year": g.enrollment_year,
+        "current_year": current_year,
         "student_count": g.student_count,
     }
 
@@ -46,7 +51,7 @@ def list_groups(
     db: Session = Depends(get_db),
 ):
     groups = db.query(StudentGroup).order_by(
-        StudentGroup.year.asc(),
+        StudentGroup.enrollment_year.asc(),
         StudentGroup.group_code.asc(),
     ).all()
     return [group_to_dict(g, db) for g in groups]
@@ -66,7 +71,6 @@ def list_departments_with_programs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return departments with their nested programs (for the form dropdown)."""
     departments = db.query(Department).order_by(Department.name).all()
     result = []
     for d in departments:
@@ -98,7 +102,7 @@ def create_group(
     g = StudentGroup(
         group_code=data.group_code,
         program_id=program_id,
-        year=data.year,
+        enrollment_year=data.enrollment_year,
         student_count=data.student_count,
     )
     db.add(g)
@@ -135,7 +139,7 @@ def update_group(
 
     g.group_code = data.group_code
     g.program_id = program_id
-    g.year = data.year
+    g.enrollment_year = data.enrollment_year
     g.student_count = data.student_count
     db.commit()
     db.refresh(g)
