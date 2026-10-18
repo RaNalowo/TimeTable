@@ -80,9 +80,11 @@ class Department(Base):
 class Program(Base):
     __tablename__ = "programs"
     id = Column(Integer, primary_key=True, index=True)
-    program_code = Column(String, unique=True, nullable=False)   # "0103"
-    program_name = Column(String, nullable=False, index=True)    # "Information Systems"
+    program_code = Column(String, unique=True, nullable=False)
+    program_name = Column(String, nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
+
+    tracks = Column(String, nullable=True)
 
     department = relationship("Department")
 
@@ -116,7 +118,7 @@ class Teacher(Base):
     max_weekly_hours = Column(Integer, nullable=False, default=20)
     max_daily_hours = Column(Integer, nullable=False, default=4)
     qualified_subjects = Column(String, nullable=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)   # 可空
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     department = relationship("Department")
     user = relationship("User", foreign_keys=[user_id])
@@ -129,8 +131,12 @@ class StudentGroup(Base):
     group_code = Column(String, unique=True, nullable=False, index=True)
     program_id = Column(Integer, ForeignKey("programs.id"), nullable=True)
     enrollment_year = Column(Integer, nullable=True)
-    year_override = Column(Integer, nullable=True)   # ← 新增：手动覆盖年级
+    year_override = Column(Integer, nullable=True)
     student_count = Column(Integer, default=0)
+
+    # ★ 新增
+    sub_group_count = Column(Integer, default=3, nullable=False)   # practice 拆几组
+    track = Column(String, nullable=True)                          # "AI" / "CYBER" / "FRONT" / "BACK"
 
     program = relationship("Program")
 
@@ -148,16 +154,13 @@ class Course(Base):
     lab_hours = Column(Integer, default=0)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
 
+    # ★ 新增
+    program_id = Column(Integer, ForeignKey("programs.id"), nullable=False, index=True)
+    is_elective = Column(Boolean, default=False, nullable=False)
+    track = Column(String, nullable=True)   # NULL = 所有组；"AI"/"CYBER"/"FRONT"/"BACK" = 只该方向
+
     department = relationship("Department")
-
-
-# Course ↔ Program many-to-many
-course_target_programs = Table(
-    "course_target_programs",
-    Base.metadata,
-    Column("course_id", Integer, ForeignKey("courses.id"), primary_key=True),
-    Column("program_id", Integer, ForeignKey("programs.id"), primary_key=True),
-)
+    program = relationship("Program")
 
 
 # ============================================================
@@ -169,8 +172,8 @@ class Semester(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
-    academic_year = Column(Integer, nullable=False)    # ← 加：2026
-    term = Column(String, nullable=False)              # ← 加：Fall / Spring
+    academic_year = Column(Integer, nullable=False)
+    term = Column(String, nullable=False)
     start_date = Column(String, nullable=False)
     end_date = Column(String, nullable=False)
     is_active = Column(Boolean, default=False)
@@ -236,7 +239,9 @@ class ScheduleEntry(Base):
     day = Column(String, nullable=False)
     session_type = Column(String, nullable=True)
 
-    # Foreign keys only — no redundant text
+    # ★ 新增：practice/lab 的子组编号，lecture 为 NULL
+    sub_group = Column(String, nullable=True)
+
     time_slot_id = Column(Integer, ForeignKey("time_slots.id"), nullable=True)
     course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)

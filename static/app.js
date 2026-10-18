@@ -324,7 +324,15 @@ function validateTeacherField(fieldId) {
 }
 
 
-// ---------- Course field validators ----------
+// ============================================================
+// Manage Course Curriculum
+// ============================================================
+
+let editingCourseId = null;
+let isAdminCourse = false;
+let courseDeptCache = []; // 存放 Departments 和它们的嵌套 Programs
+let allCoursesCache = []; // 存放所有课程，用于前端过滤
+
 function validateCourseField(fieldId) {
   const el = document.getElementById(fieldId);
   const msg = document.getElementById(fieldId + "Msg");
@@ -333,8 +341,11 @@ function validateCourseField(fieldId) {
   const v = el.value.trim();
   let err = "";
 
+  if (fieldId === "department" && !v) err = "Please select a department.";
+  if (fieldId === "program_id" && !v) err = "Please select a program.";
   if (fieldId === "course_code" && !v) err = "Course code is required.";
   if (fieldId === "course_name" && !v) err = "Course name is required.";
+
   if (fieldId === "credits") {
     if (!v) err = "Credits is required.";
     else {
@@ -360,6 +371,314 @@ function validateCourseField(fieldId) {
   if (err) { el.classList.add("input-error"); return false; }
   el.classList.remove("input-error");
   return true;
+}
+
+// 联动：Department -> Program
+function onCourseDeptChange() {
+  const deptName = document.getElementById("department").value;
+  const progSel = document.getElementById("program_id");
+  const trackSel = document.getElementById("track");
+
+  progSel.innerHTML = `<option value="">-- Select program --</option>`;
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+
+  if (!deptName) return;
+
+  const dept = courseDeptCache.find(d => d.name === deptName);
+  if (dept) {
+    progSel.innerHTML += dept.programs.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+  }
+}
+
+// 联动：Program -> Track
+function onCourseProgramChange() {
+  const progId = parseInt(document.getElementById("program_id").value, 10);
+  const trackSel = document.getElementById("track");
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+
+  if (!progId) return;
+
+  fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } })
+    .then(res => res.json())
+    .then(progs => {
+      const prog = progs.find(p => p.id === progId);
+      if (prog && prog.tracks) {
+        const tracks = prog.tracks.split(",").map(t => t.trim()).filter(Boolean);
+        tracks.forEach(t => {
+          trackSel.innerHTML += `<option value="${t}">${t}</option>`;
+        });
+      }
+    });
+}
+
+function onElectiveChange() {
+  const isChecked = document.getElementById("is_elective").checked;
+  const trackSel = document.getElementById("track");
+
+  if (isChecked) {
+    trackSel.disabled = false;
+    onCourseProgramChange();
+  } else {
+    trackSel.disabled = true;
+    trackSel.value = "";
+    document.getElementById("trackMsg").textContent = "";
+  }
+}
+
+async function initCoursesPage() {
+  const table = document.getElementById("courseTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) { window.location.href = "/login.html"; return; }
+
+  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
+  const me = await meRes.json();
+  isAdminCourse = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (isAdminCourse) {
+    if (formPanel) formPanel.style.display = "block";
+    if (accessMsg) accessMsg.textContent = "";
+  } else {
+    if (formPanel) formPanel.style.display = "none";
+    if (actionCol) actionCol.style.display = "none";
+    if (accessMsg) accessMsg.textContent = "You have read-only access.";
+  }
+
+  // 加载 Departments 并获取嵌套的 Programs（复用之前的接口）
+  try {
+    const deptRes = await fetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
+    if (deptRes.ok) {
+      courseDeptCache = await deptRes.json();
+    }
+
+    // 填充 Filter 下拉框
+    const filterSel = document.getElementById("filterProgram");
+    if (filterSel) {
+      const uniqueProgs = new Map();
+      courseDeptCache.forEach(d => d.programs.forEach(p => uniqueProgs.set(p.id, p.name)));
+      uniqueProgs.forEach((name) => {
+        filterSel.innerHTML += `<option value="${name}">${name}</option>`;
+      });
+    }
+  } catch (e) {
+    console.error("Failed to load departments", e);
+  }
+
+  const form = document.getElementById("courseForm");
+  if (form) {
+    ["course_code", "course_name", "program_id", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const evt = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(evt, () => {
+        validateCourseField(id);
+        const fm = document.getElementById("formMsg");
+        if (fm) fm.textContent = "";
+      });
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("formMsg");
+      msg.textContent = "";
+
+      const fields = ["course_code", "course_name", "department", "program_id", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"];
+      // ★ 全局校验：遍历所有字段，哪怕前面错了也要全标红
+      let hasError = false;
+      fields.forEach(f => {
+        if (!validateCourseField(f)) hasError = true;
+      });
+      if (hasError) {
+        msg.style.color = "#dc2626";
+        msg.textContent = "Please fix the errors above before saving.";
+        return;
+      }
+
+      const payload = {
+        course_code: document.getElementById("course_code").value.trim(),
+        course_name: document.getElementById("course_name").value.trim(),
+        program_id: parseInt(document.getElementById("program_id").value, 10),
+        credits: parseInt(document.getElementById("credits").value.trim(), 10),
+        semester_level: document.getElementById("semester_level").value.trim() || null,
+        total_hours: parseInt(document.getElementById("total_hours").value.trim(), 10),
+        lecture_hours: parseInt(document.getElementById("lecture_hours").value.trim() || "0", 10),
+        practice_hours: parseInt(document.getElementById("practice_hours").value.trim() || "0", 10),
+        lab_hours: parseInt(document.getElementById("lab_hours").value.trim() || "0", 10),
+        is_elective: document.getElementById("is_elective").checked,
+        track: document.getElementById("is_elective").checked ? (document.getElementById("track").value.trim() || null) : null,
+        department: document.getElementById("department").value || null,
+      };
+
+      const sum = payload.lecture_hours + payload.practice_hours + payload.lab_hours;
+      if (sum !== payload.total_hours) {
+        msg.style.color = "#dc2626";
+        msg.textContent = `Total session hours (${sum}) do not match Total Hours (${payload.total_hours}).`;
+        ["lecture_hours", "practice_hours", "lab_hours", "total_hours"].forEach(highlightField);
+        return;
+      }
+
+      const url = editingCourseId ? API + "/courses/" + editingCourseId : API + "/courses";
+      const method = editingCourseId ? "PUT" : "POST";
+
+      const r = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+
+      if (!r.ok) {
+        msg.style.color = "#dc2626";
+        msg.textContent = data.detail || "Failed";
+        return;
+      }
+
+      msg.style.color = "#16a34a";
+      msg.textContent = editingCourseId ? "Course updated successfully" : "Course added successfully";
+
+      editingCourseId = null;
+      document.getElementById("formSubmitBtn").textContent = "Save Course";
+      document.getElementById("formTitle").textContent = "Add Course";
+      form.reset();
+      onCourseDeptChange(); // 重置联动
+      onElectiveChange();   // 重置禁用状态
+
+      fields.forEach(id => {
+        const m = document.getElementById(id + "Msg");
+        if (m) m.textContent = "";
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("input-error");
+      });
+
+      loadCourses();
+    });
+  }
+
+  loadCourses();
+}
+
+async function loadCourses() {
+  const tbody = document.getElementById("courseTable");
+  if (!tbody) return;
+
+  const res = await fetch(API + "/courses", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="10">Failed to load courses</td></tr>`; return; }
+  allCoursesCache = await res.json();
+
+  applyCourseFilters();
+}
+
+function applyCourseFilters() {
+  const tbody = document.getElementById("courseTable");
+  if (!tbody) return;
+
+  const searchQ = document.getElementById("courseFilter").value.toLowerCase();
+  const filterProg = document.getElementById("filterProgram").value;
+
+  let filtered = allCoursesCache;
+
+  // 过滤 1：Program
+  if (filterProg !== "all") {
+    filtered = filtered.filter(c => c.program_name === filterProg);
+  }
+  // 过滤 2：文字搜索
+  if (searchQ) {
+    filtered = filtered.filter(c =>
+      c.course_code.toLowerCase().includes(searchQ) ||
+      c.course_name.toLowerCase().includes(searchQ)
+    );
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10" style="color:#888;">No courses found.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(c => {
+    const split = `${c.lecture_hours}L + ${c.practice_hours}P + ${c.lab_hours}Lab`;
+    const typeBadge = c.is_elective
+        ? `<span class="badge" style="background:#dcfce7;color:#166534;">Elective</span>`
+        : `<span class="badge" style="background:#f3f4f6;color:#4b5563;">Core</span>`;
+    const trackBadge = c.track ? `<span class="badge" style="background:#fef3c7;color:#92400e;">${c.track}</span>` : "-";
+
+    return `
+      <tr>
+        <td><b>${c.course_code}</b></td>
+        <td>${c.course_name}</td>
+        <td><span class="badge">${c.program_name || "-"}</span></td>
+        <td>${c.credits} ECTS</td>
+        <td>${c.semester_level || "-"}</td>
+        <td><span class="split">${split}</span></td>
+        <td>${typeBadge}</td>
+        <td>${trackBadge}</td>
+        <td>${c.department ? `<span class="badge">${c.department}</span>` : "-"}</td>
+        ${isAdminCourse ? `
+          <td>
+            <button class="btn-edit" onclick="editCourse(${c.id})">Edit</button>
+            <button class="btn-del" onclick="deleteCourse(${c.id})">Delete</button>
+          </td>
+        ` : `<td></td>`}
+      </tr>
+    `;
+  }).join("");
+}
+
+async function editCourse(id) {
+  // 从缓存中找
+  const c = allCoursesCache.find(x => x.id === id);
+  if (!c) return;
+
+  // 1. 先联动 Department
+  let targetDept = "";
+  courseDeptCache.forEach(d => {
+    if (d.programs.some(p => p.id === c.program_id)) {
+      targetDept = d.name;
+    }
+  });
+  document.getElementById("department").value = targetDept || "";
+  onCourseDeptChange(); // 触发加载 Programs
+
+  // 2. 填 Program
+  document.getElementById("program_id").value = c.program_id || "";
+
+  // 3. 填其他
+  document.getElementById("course_code").value = c.course_code;
+  document.getElementById("course_name").value = c.course_name;
+  document.getElementById("credits").value = c.credits;
+  document.getElementById("semester_level").value = c.semester_level || "";
+  document.getElementById("total_hours").value = c.total_hours;
+  document.getElementById("lecture_hours").value = c.lecture_hours;
+  document.getElementById("practice_hours").value = c.practice_hours;
+  document.getElementById("lab_hours").value = c.lab_hours;
+  document.getElementById("is_elective").checked = c.is_elective;
+
+  onElectiveChange(); // 触发 Track 可用状态
+  document.getElementById("track").value = c.track || "";
+
+  editingCourseId = id;
+  document.getElementById("formTitle").textContent = "Edit Course";
+  document.getElementById("formSubmitBtn").textContent = "Update Course";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteCourse(id) {
+  const ok = await showConfirm("Delete Course", "Are you sure you want to delete this course? This cannot be undone.");
+  if (!ok) return;
+  const res = await fetch(API + "/courses/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
+  const data = await res.json();
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
+  showNotice("Course deleted", "success");
+  loadCourses();
+}
+
+function filterCourses() {
+  applyCourseFilters();
 }
 
 async function initRoomsPage() {
@@ -781,277 +1100,6 @@ function filterTeachers() {
   if (!el) return;
   const q = el.value.toLowerCase();
   document.querySelectorAll("#teacherTable tr").forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
-  });
-}
-
-// ============================================================
-// Manage Course Curriculum
-// ============================================================
-
-let editingCourseId = null;
-let isAdminCourse = false;
-
-async function initCoursesPage() {
-  const table = document.getElementById("courseTable");
-  if (!table) return;
-
-  const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
-
-  const meRes = await fetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
-  const me = await meRes.json();
-  isAdminCourse = me.roles.includes("admin");
-
-  const formPanel = document.getElementById("formPanel");
-  const accessMsg = document.getElementById("accessMsg");
-  const actionCol = document.getElementById("actionCol");
-
-  if (isAdminCourse) {
-    if (formPanel) formPanel.style.display = "block";
-    if (accessMsg) accessMsg.textContent = "";
-  } else {
-    if (formPanel) formPanel.style.display = "none";
-    if (actionCol) actionCol.style.display = "none";
-    if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify curriculum.";
-  }
-
-  // ---------- Load unique PROGRAMS as checkboxes ----------
-  try {
-    const groupsRes = await fetch(API + "/student-groups", {
-      headers: { "Authorization": "Bearer " + token },
-    });
-    const groups = await groupsRes.json();
-
-    // 收集 program，按小写去重（避免 "Information System" 和 "Information Systems" 并存）
-    const seen = new Map();
-    groups.forEach(g => {
-      if (!g.program) return;
-      const key = g.program.trim().toLowerCase();
-      if (!seen.has(key)) seen.set(key, g.program.trim());
-    });
-    const programs = [...seen.values()].sort();
-
-    const groupList = document.getElementById("groupList");
-    if (groupList) {
-      groupList.innerHTML = programs.map(p => `
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-          <input type="checkbox" class="group-check" value="${p}" />
-          ${p}
-        </label>
-      `).join("");
-    }
-  } catch (e) {
-    console.error("Failed to load programs", e);
-  }
-
-  const form = document.getElementById("courseForm");
-  if (form) {
-    // Real-time validation
-    ["course_code", "course_name", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener("input", () => {
-        validateCourseField(id);
-        const fm = document.getElementById("formMsg");
-        if (fm) fm.textContent = "";
-      });
-    });
-
-    // Submit
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById("formMsg");
-      msg.textContent = "";
-
-      const fields = ["course_code", "course_name", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"];
-      const ok = fields.every(f => validateCourseField(f));
-      if (!ok) return;
-
-      // Checkbox value: "Information Systems, Computer Science"
-      const selectedPrograms = Array.from(document.querySelectorAll(".group-check:checked"))
-        .map(cb => cb.value);
-
-      const payload = {
-        course_code: document.getElementById("course_code").value.trim(),
-        course_name: document.getElementById("course_name").value.trim(),
-        credits: parseInt(document.getElementById("credits").value.trim(), 10),
-        semester_level: document.getElementById("semester_level").value.trim() || null,
-        total_hours: parseInt(document.getElementById("total_hours").value.trim(), 10),
-        lecture_hours: parseInt(document.getElementById("lecture_hours").value.trim() || "0", 10),
-        practice_hours: parseInt(document.getElementById("practice_hours").value.trim() || "0", 10),
-        lab_hours: parseInt(document.getElementById("lab_hours").value.trim() || "0", 10),
-        target_groups: selectedPrograms.join(", ") || null,
-        department: document.getElementById("department").value || null,
-      };
-
-      // Cross-field: hours sum must equal total
-      const sum = payload.lecture_hours + payload.practice_hours + payload.lab_hours;
-      if (sum !== payload.total_hours) {
-        msg.style.color = "#dc2626";
-        msg.textContent = `Total session hours (${sum}) do not match Total Hours (${payload.total_hours}).`;
-        ["lecture_hours", "practice_hours", "lab_hours", "total_hours"].forEach(highlightField);
-        return;
-      }
-
-      const url = editingCourseId ? API + "/courses/" + editingCourseId : API + "/courses";
-      const method = editingCourseId ? "PUT" : "POST";
-
-      const r = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + getToken(),
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json();
-
-      if (!r.ok) {
-        msg.style.color = "#dc2626";
-        const detail = data.detail || "Failed";
-        msg.textContent = detail;
-        if (detail.toLowerCase().includes("code")) {
-          highlightField("course_code");
-        }
-        return;
-      }
-
-      msg.style.color = "#16a34a";
-      msg.textContent = editingCourseId
-        ? "Course updated successfully"
-        : "Course added successfully";
-
-      editingCourseId = null;
-      document.getElementById("formSubmitBtn").textContent = "Save Course";
-      document.getElementById("formTitle").textContent = "Add Course";
-      form.reset();
-
-      fields.forEach(id => {
-        const m = document.getElementById(id + "Msg");
-        if (m) m.textContent = "";
-        const el = document.getElementById(id);
-        if (el) el.classList.remove("input-error");
-      });
-      document.querySelectorAll(".group-check").forEach(cb => cb.checked = false);
-
-      loadCourses();
-    });
-  }
-
-  loadCourses();
-}
-
-async function loadCourses() {
-  const tbody = document.getElementById("courseTable");
-  if (!tbody) return;
-
-  const res = await fetch(API + "/courses", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="9">Failed to load courses</td></tr>`;
-    return;
-  }
-  const courses = await res.json();
-
-  if (courses.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="color:#888;">No courses yet.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = courses.map(c => {
-    const split = `${c.lecture_hours}L + ${c.practice_hours}P + ${c.lab_hours}Lab`;
-    return `
-      <tr>
-        <td><b>${c.course_code}</b></td>
-        <td>${c.course_name}</td>
-        <td>${c.credits} ECTS</td>
-        <td>${c.semester_level || "-"}</td>
-        <td><span class="split">${split}</span></td>
-        <td>${c.total_hours}h</td>
-        <td>${c.target_groups || "-"}</td>
-        <td>${c.department ? `<span class="badge">${c.department}</span>` : "-"}</td>
-        ${isAdminCourse ? `
-          <td>
-            <button class="btn-edit" onclick="editCourse(${c.id})">Edit</button>
-            <button class="btn-del" onclick="deleteCourse(${c.id})">Delete</button>
-          </td>
-        ` : `<td></td>`}
-      </tr>
-    `;
-  }).join("");
-}
-
-async function editCourse(id) {
-  const res = await fetch(API + "/courses", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) return;
-  const courses = await res.json();
-  const c = courses.find(x => x.id === id);
-  if (!c) return;
-
-  document.getElementById("course_code").value = c.course_code;
-  document.getElementById("course_name").value = c.course_name;
-  document.getElementById("credits").value = c.credits;
-  document.getElementById("semester_level").value = c.semester_level || "";
-  document.getElementById("total_hours").value = c.total_hours;
-  document.getElementById("lecture_hours").value = c.lecture_hours;
-  document.getElementById("practice_hours").value = c.practice_hours;
-  document.getElementById("lab_hours").value = c.lab_hours;
-  document.getElementById("department").value = c.department || "";
-
-  // Restore checkbox state from comma-separated program list
-  document.querySelectorAll(".group-check").forEach(cb => cb.checked = false);
-  if (c.target_groups) {
-    const selected = c.target_groups.split(",").map(s => s.trim());
-    document.querySelectorAll(".group-check").forEach(cb => {
-      if (selected.includes(cb.value)) cb.checked = true;
-    });
-  }
-
-  editingCourseId = id;
-  document.getElementById("formTitle").textContent = "Edit Course";
-  document.getElementById("formSubmitBtn").textContent = "Update Course";
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function deleteCourse(id) {
-  const ok = await showConfirm(
-    "Delete Course",
-    "Are you sure you want to delete this course? This cannot be undone."
-  );
-  if (!ok) return;
-
-  const res = await fetch(API + "/courses/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
-  showNotice("Course deleted", "success");
-  loadCourses();
-}
-
-function filterCourses() {
-  const el = document.getElementById("courseFilter");
-  if (!el) return;
-  const q = el.value.toLowerCase();
-  document.querySelectorAll("#courseTable tr").forEach(tr => {
     tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
   });
 }
@@ -1811,9 +1859,16 @@ async function runGeneration() {
     progressFill.style.background = "#16a34a";
     progressText.textContent = `Done in ${data.elapsed_seconds}s`;
 
-    const msg = data.status === "success"
-      ? `Generated ${data.placed_count} class sessions with zero hard-constraint violations.`
-      : `Generated ${data.placed_count} sessions, but ${data.failed_count} could not be placed.`;
+    let msg;
+    if (data.status === "success") {
+      msg = `Generated all ${data.placed_count} sessions with zero hard-constraint violations.`;
+    } else if (data.status === "failed") {
+      msg = `Generation failed: 0/${data.total_sessions} sessions could be placed. Check data.`;
+    } else {
+      const cov = data.coverage !== undefined ? data.coverage : "?";
+      msg = `Generated ${data.placed_count}/${data.total_sessions} sessions (${cov}% coverage). `
+          + `${data.failed_count} could not be placed.`;
+    }
     showStatusBanner(data.status, msg);
 
     renderGeneratorScore(data);
@@ -1845,6 +1900,9 @@ function renderGeneratorScore(data) {
 
   const score = data.score;
   const scoreClass = score >= 70 ? "" : score >= 40 ? "mid" : "low";
+  const coverage = (data.coverage !== undefined) ? data.coverage : null;
+  const placed = data.placed_count;
+  const total = data.total_sessions;
 
   const breakdownHTML = data.score_breakdown.length === 0
     ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
@@ -1857,10 +1915,14 @@ function renderGeneratorScore(data) {
         </div>
       `).join("");
 
+  const coverageHTML = coverage === null
+    ? `<span class="score-label">/ 100 · ${placed} sessions placed</span>`
+    : `<span class="score-label">/ 100 · ${placed}/${total} sessions placed (${coverage}% coverage)</span>`;
+
   box.innerHTML = `
     <div class="score-header">
       <span class="score-number ${scoreClass}">${score}</span>
-      <span class="score-label">/ 100 · ${data.placed_count} sessions placed</span>
+      ${coverageHTML}
     </div>
     <div class="score-bar"><div style="width: ${score}%"></div></div>
     ${breakdownHTML}
@@ -1923,57 +1985,21 @@ let scheduleIsAdmin = false;
 let draggingEntryId = null;
 let pendingSwap = null;
 
-async function initSchedulePage() {
-  // Guard: only run on schedule.html (which has summaryText)
-  const summaryEl = document.getElementById("summaryText");
-  if (!summaryEl) return;
 
-  const gridTable = document.getElementById("gridTable");
-  if (!gridTable) return;
-
-  const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
-
-  const meRes = await fetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
-  const me = await meRes.json();
-  scheduleIsAdmin = me.roles.includes("admin");
-
-  const roomsRes = await fetch(API + "/rooms", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (roomsRes.ok) {
-    roomsCache = await roomsRes.json();
-  }
-
-  const daySel = document.getElementById("moveDay");
-  const slotSel = document.getElementById("moveSlot");
-  daySel.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    .map(d => `<option value="${d}">${d}</option>`).join("");
-  slotSel.innerHTML = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
-  ].map(s => `<option value="${s}">${s}</option>`).join("");
-  document.getElementById("moveRoom").innerHTML = roomsCache
-    .map(r => `<option value="${r.id}">${r.building} · ${r.room_code} (cap ${r.capacity})</option>`)
-    .join("");
-
-  await refreshGrid();
+// 用于根据子组（如 IS-26-AI-1）反查大组所属的专业
+function getProgramForGroup(groupCode) {
+  if (!groupCode) return null;
+  const baseCode = groupCode.split("-")[0] + "-" + groupCode.split("-")[1] + "-" + groupCode.split("-")[2];
+  const g = scheduleGroupsCache.find(x => x.group_code === baseCode);
+  return g ? g.program : null;
 }
 
+
+let scheduleGroupsCache = [];
+let currentProgramFilter = "all";
+
+
+// ★ 补回这两个函数
 async function refreshGrid() {
   const res = await fetch(API + "/conflicts/grid", {
     headers: { "Authorization": "Bearer " + getToken() },
@@ -1992,7 +2018,65 @@ async function rescanConflicts() {
   await refreshGrid();
 }
 
-// RENAMED to avoid clash with User Story 6's renderGrid()
+
+
+async function initSchedulePage() {
+  const summaryEl = document.getElementById("summaryText");
+  if (!summaryEl) return;
+  const gridTable = document.getElementById("gridTable");
+  if (!gridTable) return;
+
+  const token = getToken();
+  if (!token) { window.location.href = "/login.html"; return; }
+
+  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
+  const me = await meRes.json();
+  scheduleIsAdmin = me.roles.includes("admin");
+
+  const roomsRes = await fetch(API + "/rooms", { headers: { "Authorization": "Bearer " + token } });
+  if (roomsRes.ok) roomsCache = await roomsRes.json();
+
+  const groupsRes = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
+  if (groupsRes.ok) scheduleGroupsCache = await groupsRes.json();
+
+  // ★ 直接去填充 HTML 里已经存在的下拉框（不再动态注入）
+  try {
+    const progRes = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
+    if (progRes.ok) {
+      const progs = await progRes.json();
+      const sel = document.getElementById("programFilter");
+      if (sel) {
+        let opts = `<option value="all">All Programs</option>`;
+        progs.forEach(p => {
+          opts += `<option value="${p.program_name}">${p.program_name}</option>`;
+        });
+        sel.innerHTML = opts;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load programs", e);
+  }
+
+  const daySel = document.getElementById("moveDay");
+  const slotSel = document.getElementById("moveSlot");
+  daySel.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `<option value="${d}">${d}</option>`).join("");
+
+  const slotsRes = await fetch(API + "/time-slots/active", { headers: { "Authorization": "Bearer " + token } });
+  const slots = slotsRes.ok ? await slotsRes.json() : [];
+  slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join("");
+
+  document.getElementById("moveRoom").innerHTML = roomsCache.map(r => `<option value="${r.id}">${r.building} · ${r.room_code} (cap ${r.capacity})</option>`).join("");
+
+  await refreshGrid();
+}
+
+function onScheduleFilterChange() {
+  const sel = document.getElementById("programFilter");
+  if (sel) currentProgramFilter = sel.value;
+  renderScheduleGrid();
+}
+
 function renderScheduleGrid() {
   const table = document.getElementById("gridTable");
   const { days, time_slots, cells } = scheduleData;
@@ -2005,12 +2089,20 @@ function renderScheduleGrid() {
     html += `<tr><td class="slot-label">${slot}</td>`;
     days.forEach(day => {
       const cell = cells.find(c => c.day === day && c.time_slot === slot);
-      const entries = cell ? cell.entries : [];
+      let entries = cell ? cell.entries : [];
+
+      if (currentProgramFilter !== "all") {
+        entries = entries.filter(e => {
+          const prog = getProgramForGroup(e.target_groups);
+          return prog === currentProgramFilter;
+        });
+      }
 
       html += `<td data-day="${day}" data-slot="${slot}"
              ondragover="onCellDragOver(event, '${day}', '${slot}')"
              ondragleave="onCellDragLeave(event)"
              ondrop="onCellDrop(event, '${day}', '${slot}')">`;
+
       if (entries.length === 0) {
         html += `<span style="color:#d1d5db;font-size:11px;">—</span>`;
       } else {
@@ -2027,6 +2119,7 @@ function renderScheduleGrid() {
               <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
               <div class="course">${e.course_code} <span class="type">${e.session_type}</span></div>
               <div class="meta">${e.room_code} · ${e.teacher_name || "-"}</div>
+              <div class="meta" style="font-size:10px;color:#888;">${e.target_groups || ""}</div>
             </div>
           `;
         });
@@ -2036,14 +2129,12 @@ function renderScheduleGrid() {
     html += "</tr>";
   });
   html += "</tbody>";
-
   table.innerHTML = html;
 
   const errors = scheduleData.error_count || 0;
   const warnings = scheduleData.warning_count || 0;
   const total = scheduleData.total_entries || 0;
-  document.getElementById("summaryText").textContent =
-    `${total} sessions · ${errors} error(s) · ${warnings} warning(s)`;
+  document.getElementById("summaryText").textContent = `${total} sessions · ${errors} error(s) · ${warnings} warning(s)`;
 }
 
 function updateBanner() {
@@ -2218,20 +2309,31 @@ function onCellDragOver(evt, day, slot) {
 
   const td = evt.currentTarget;
   document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid")
-    .forEach(el => el.classList.remove(
-      "drop-target", "drop-target-occupied", "drop-invalid"
-    ));
+    .forEach(el => el.classList.remove("drop-target", "drop-target-occupied", "drop-invalid"));
 
   const cell = scheduleData.cells.find(c => c.day === day && c.time_slot === slot);
-  const occupied = cell && cell.entries && cell.entries.length > 0;
+  const entries = (cell && cell.entries) || [];
 
-  if (occupied) {
+  // 找到当前正在拖拽的卡片数据
+  let draggedEntry = null;
+  for (const c of scheduleData.cells) {
+    const found = c.entries.find(e => e.id === draggingEntryId);
+    if (found) { draggedEntry = found; break; }
+  }
+
+  // 检查目标格子里有没有和拖拽卡片“同组”的课
+  const hasSameGroup = draggedEntry && entries.some(e => e.target_groups === draggedEntry.target_groups);
+
+  if (hasSameGroup) {
+    // 同一个组撞车了，标黄，准备交换
     td.classList.add("drop-target-occupied");
   } else {
+    // 只是不同组的课在这个时段，直接标蓝，允许放入
     td.classList.add("drop-target");
   }
   evt.dataTransfer.dropEffect = "move";
 }
+
 
 function onCellDragLeave(evt) {
   evt.currentTarget.classList.remove(
@@ -2247,16 +2349,25 @@ async function onCellDrop(evt, day, slot) {
   const td = evt.currentTarget;
   td.classList.remove("drop-target", "drop-target-occupied", "drop-invalid");
 
+  let draggedEntry = null;
+  for (const c of scheduleData.cells) {
+    const found = c.entries.find(e => e.id === draggedId);
+    if (found) { draggedEntry = found; break; }
+  }
+  if (!draggedEntry) return;
+
   const cell = scheduleData.cells.find(c => c.day === day && c.time_slot === slot);
   const entries = (cell && cell.entries) || [];
 
   if (entries.some(e => e.id === draggedId)) return;
 
-  if (entries.length === 0) {
+  const hasSameGroup = entries.some(e => e.target_groups === draggedEntry.target_groups);
+
+  if (!hasSameGroup) {
     await moveEntryToSlot(draggedId, day, slot);
   } else {
-    const targetId = entries[0].id;
-    openSwapModal(draggedId, targetId, entries[0].course_code, day, slot);
+    const targetEntry = entries.find(e => e.target_groups === draggedEntry.target_groups);
+    openSwapModal(draggedId, targetEntry.id, targetEntry.course_code, day, slot);
   }
 }
 
@@ -2732,74 +2843,94 @@ async function deleteSemester(id) {
 }
 
 // ============================================================
-// Manage Student Groups (US-08)
+// Manage Student Groups
 // ============================================================
 
 let editingGroupId = null;
 let groupIsAdmin = false;
-
 let departmentsCache = [];
+let programsCache = []; // ★ 用来存 Programs 和它们的 Tracks
 
+// 联动：Department -> Program
 function onDepartmentChange() {
   const deptName = document.getElementById("department").value;
   const progSel = document.getElementById("program");
-  const dept = departmentsCache.find(d => d.name === deptName);
+  const trackSel = document.getElementById("track");
 
-  if (!dept) {
-    progSel.innerHTML = `<option value="">-- Select program --</option>`;
+  progSel.innerHTML = `<option value="">-- Select program --</option>`;
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+  trackSel.disabled = true;
+
+  if (!deptName) return;
+
+  const dept = departmentsCache.find(d => d.name === deptName);
+  if (dept) {
+    progSel.innerHTML += dept.programs.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
+  }
+}
+
+// 联动：Program -> Track
+function onGroupProgramChange() {
+  const progName = document.getElementById("program").value;
+  const trackSel = document.getElementById("track");
+
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+
+  if (!progName) {
+    trackSel.disabled = true;
     return;
   }
 
-  progSel.innerHTML = `<option value="">-- Select program --</option>` +
-    dept.programs.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
+  const prog = programsCache.find(p => p.program_name === progName);
+  if (prog && prog.tracks) {
+    const tracks = prog.tracks.split(",").map(t => t.trim()).filter(Boolean);
+    if (tracks.length > 0) {
+      tracks.forEach(t => {
+        trackSel.innerHTML += `<option value="${t}">${t}</option>`;
+      });
+      trackSel.disabled = false;
+    } else {
+      trackSel.disabled = true;
+    }
+  } else {
+    trackSel.disabled = true;
+  }
 }
 
 function validateGroupField(fieldId) {
-  const inputEl = document.getElementById(fieldId);
-  const msgEl = document.getElementById(fieldId + "Msg");
-  if (!inputEl || !msgEl) return true;
+  const el = document.getElementById(fieldId);
+  const msg = document.getElementById(fieldId + "Msg");
+  if (!el || !msg) return true;
 
-  const value = inputEl.value.trim();
-  let errorMsg = "";
+  const v = el.value.trim();
+  let err = "";
 
   if (fieldId === "group_code") {
-    if (!value) {
-      errorMsg = "Group code is required.";
-    } else if (!/^(IS|CS)-\d{2}-[A-Z]$/.test(value)) {
-      errorMsg = "Format must be like IS-23-A or CS-24-B (2 letters, 2-digit year, 1 letter).";
+    if (!v) err = "Group code is required.";
+    // 更新正则：允许后面跟任意字母组合（如 AI, CYBER, BACK）
+    else if (!/^(IS|CS)-\d{2}-[A-Z]+$/i.test(v)) {
+      err = "Format must be like IS-23-AI or CS-24-BACK.";
     }
   } else if (fieldId === "department") {
-    if (!value) {
-      errorMsg = "Please select a department.";
-    }
+    if (!v) err = "Please select a department.";
   } else if (fieldId === "program") {
-    if (!value) {
-      errorMsg = "Please select a program.";
-    }
+    if (!v) err = "Please select a program.";
   } else if (fieldId === "year_override") {
-    if (value) {
-      const y = parseInt(value, 10);
-      if (isNaN(y) || y < 1 || y > 10) {
-        errorMsg = "Year override must be between 1 and 10 (leave empty to auto-calculate).";
-      }
+    if (v) {
+      const y = parseInt(v, 10);
+      if (isNaN(y) || y < 1 || y > 10) err = "Year override must be between 1 and 10.";
     }
   } else if (fieldId === "student_count") {
-    if (!value) {
-      errorMsg = "Student count is required.";
-    } else {
-      const c = parseInt(value, 10);
-      if (isNaN(c) || c < 1 || c > 25) {
-        errorMsg = "Student count must be between 1 and 25.";
-      }
+    if (!v) err = "Student count is required.";
+    else {
+      const c = parseInt(v, 10);
+      if (isNaN(c) || c < 1 || c > 500) err = "Student count must be between 1 and 500.";
     }
   }
 
-  msgEl.textContent = errorMsg;
-  if (errorMsg) {
-    inputEl.classList.add("input-error");
-    return false;
-  }
-  inputEl.classList.remove("input-error");
+  msg.textContent = err;
+  if (err) { el.classList.add("input-error"); return false; }
+  el.classList.remove("input-error");
   return true;
 }
 
@@ -2808,19 +2939,10 @@ async function initStudentGroupsPage() {
   if (!table) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   groupIsAdmin = me.roles.includes("admin");
 
@@ -2837,33 +2959,25 @@ async function initStudentGroupsPage() {
     accessMsg.textContent = "Read-only. Only admins can modify student groups.";
   }
 
-  // ---------- Load departments and their nested programs ----------
+  // 获取 Departments (包含嵌套的 Programs)
   try {
-    const deptRes = await fetch(API + "/student-groups/departments", {
-      headers: { "Authorization": "Bearer " + token },
-    });
+    const deptRes = await fetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       departmentsCache = await deptRes.json();
-
       const deptSel = document.getElementById("department");
-      if (deptSel) {
-        deptSel.innerHTML = `<option value="">-- Select department --</option>` +
-          departmentsCache.map(d => `<option value="${d.name}">${d.name}</option>`).join("");
-      }
-
-      const progSel = document.getElementById("program");
-      if (progSel) {
-        progSel.innerHTML = `<option value="">-- Select program --</option>`;
-      }
+      deptSel.innerHTML = `<option value="">-- Select department --</option>` +
+        departmentsCache.map(d => `<option value="${d.name}">${d.name}</option>`).join("");
     }
-  } catch (e) {
-    console.error("Failed to load departments", e);
-  }
+
+    // ★ 还需要获取 Programs 拿到 Tracks
+    const progRes = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
+    if (progRes.ok) {
+      programsCache = await progRes.json();
+    }
+  } catch (e) { console.error(e); }
 
   const form = document.getElementById("groupForm");
-
-  // ---------- Live validation ----------
-  ["group_code", "department", "program", "year_override", "student_count"].forEach((id) => {
+  ["group_code", "department", "program", "student_count"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     const evt = el.tagName === "SELECT" ? "change" : "input";
@@ -2874,89 +2988,61 @@ async function initStudentGroupsPage() {
     });
   });
 
-  // ---------- Submit ----------
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-
     const formMsg = document.getElementById("formMsg");
     formMsg.textContent = "";
 
-    // Validate all fields
     const okCode = validateGroupField("group_code");
     const okDept = validateGroupField("department");
     const okProgram = validateGroupField("program");
-    const okYear = validateGroupField("year_override");
     const okCount = validateGroupField("student_count");
-    if (!okCode || !okDept || !okProgram || !okYear || !okCount) return;
+    if (!okCode || !okDept || !okProgram || !okCount) return;
 
     const groupCode = document.getElementById("group_code").value.trim();
-    const program = document.getElementById("program").value;
+    const programName = document.getElementById("program").value;
+    const track = document.getElementById("track").value.trim() || null;
     const yearOverrideStr = document.getElementById("year_override").value.trim();
     const studentCountStr = document.getElementById("student_count").value.trim();
 
-    // Auto-derive enrollment year from group_code: "IS-23-A" → 2023
+    // 自动从 group_code 提取年份 (如 IS-23-AI -> 2023)
     const parts = groupCode.split("-");
-    const enrollment_year = parts.length >= 2
-      ? 2000 + parseInt(parts[1], 10)
-      : null;
-
+    const enrollment_year = parts.length >= 2 ? 2000 + parseInt(parts[1], 10) : null;
     const year_override = yearOverrideStr ? parseInt(yearOverrideStr, 10) : null;
     const student_count = parseInt(studentCountStr, 10);
 
     const payload = {
       group_code: groupCode,
-      program: program || null,
+      program: programName || null,
+      track: track,  // ★ 提交 track
       enrollment_year: enrollment_year,
       year_override: year_override,
       student_count: student_count,
     };
 
-    const url = editingGroupId
-      ? API + "/student-groups/" + editingGroupId
-      : API + "/student-groups";
+    const url = editingGroupId ? API + "/student-groups/" + editingGroupId : API + "/student-groups";
     const method = editingGroupId ? "PUT" : "POST";
 
     const r = await fetch(url, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
     });
     const data = await r.json();
 
     if (!r.ok) {
-      const detail = data.detail || "Failed";
-      if (detail.toLowerCase().includes("group code")) {
-        document.getElementById("group_codeMsg").textContent = detail;
-        document.getElementById("group_code").classList.add("input-error");
-      } else {
-        formMsg.style.color = "#dc2626";
-        formMsg.textContent = detail;
-      }
+      formMsg.style.color = "#dc2626";
+      formMsg.textContent = data.detail || "Failed";
       return;
     }
 
     formMsg.style.color = "#16a34a";
-    formMsg.textContent = editingGroupId
-      ? "Student group updated"
-      : "Student group created";
+    formMsg.textContent = editingGroupId ? "Student group updated" : "Student group created";
 
     editingGroupId = null;
     document.getElementById("formSubmitBtn").textContent = "Save Group";
     document.getElementById("formTitle").textContent = "Add Student Group";
     form.reset();
-
-    // Clear all error states
-    ["group_code", "department", "program", "year_override", "student_count"].forEach((id) => {
-      const msgEl = document.getElementById(id + "Msg");
-      if (msgEl) msgEl.textContent = "";
-      const inputEl = document.getElementById(id);
-      if (inputEl) inputEl.classList.remove("input-error");
-    });
-
-    // Reset program dropdown
     onDepartmentChange();
 
     loadStudentGroups();
@@ -2969,33 +3055,27 @@ async function loadStudentGroups() {
   const tbody = document.getElementById("groupTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/student-groups", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="7">Failed to load groups</td></tr>`;
-    return;
-  }
+  const res = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="8">Failed to load groups</td></tr>`; return; }
   const groups = await res.json();
 
   document.getElementById("countLabel").textContent = `${groups.length} group(s)`;
 
   if (groups.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#888;">No groups yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No groups yet.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = groups.map(g => {
     let currentYear = g.current_year ? `Year ${g.current_year}` : "-";
-    if (g.year_override) {
-      currentYear += ` <span style="color:#dc2626;font-size:11px;">(override)</span>`;
-    }
+    if (g.year_override) currentYear += ` <span style="color:#dc2626;font-size:11px;">(override)</span>`;
 
     return `
       <tr>
         <td><b>${g.group_code}</b></td>
         <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
-        <td>${g.department ? `<span class="badge-dept">${g.department}</span>` : "-"}</td>
+        <td>${g.track ? `<span class="badge badge-track">${g.track}</span>` : "-"}</td> <!-- ★ 新增列 -->
+        <td>${g.department ? `<span class="badge badge-dept">${g.department}</span>` : "-"}</td>
         <td>${g.enrollment_year || "-"}</td>
         <td>${currentYear}</td>
         <td>${g.student_count}</td>
@@ -3008,6 +3088,33 @@ async function loadStudentGroups() {
       </tr>
     `;
   }).join("");
+}
+
+async function editGroup(id) {
+  const res = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) return;
+  const list = await res.json();
+  const g = list.find(x => x.id === id);
+  if (!g) return;
+
+  document.getElementById("group_code").value = g.group_code;
+  document.getElementById("student_count").value = g.student_count;
+  document.getElementById("year_override").value = g.year_override || "";
+
+  // 回填联动
+  const dept = departmentsCache.find(d => d.programs.some(p => p.name === g.program));
+  document.getElementById("department").value = dept ? dept.name : "";
+  onDepartmentChange(); // 加载 Programs
+
+  document.getElementById("program").value = g.program || "";
+  onGroupProgramChange(); // 加载 Tracks
+
+  document.getElementById("track").value = g.track || ""; // 回填 Track
+
+  editingGroupId = id;
+  document.getElementById("formTitle").textContent = "Edit Student Group";
+  document.getElementById("formSubmitBtn").textContent = "Update Group";
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 async function deleteGroup(id) {
@@ -3030,33 +3137,6 @@ async function deleteGroup(id) {
   loadStudentGroups();
 }
 
-async function editGroup(id) {
-  const res = await fetch(API + "/student-groups", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) return;
-  const list = await res.json();
-  const g = list.find(x => x.id === id);
-  if (!g) return;
-
-  document.getElementById("group_code").value = g.group_code;
-  document.getElementById("student_count").value = g.student_count;
-  document.getElementById("year_override").value = g.year_override || "";
-
-  // Pick the department this program belongs to
-  const progName = g.program;
-  const dept = departmentsCache.find(d =>
-    d.programs.some(p => p.name === progName)
-  );
-  document.getElementById("department").value = dept ? dept.name : "";
-  onDepartmentChange();
-  document.getElementById("program").value = progName || "";
-
-  editingGroupId = id;
-  document.getElementById("formTitle").textContent = "Edit Student Group";
-  document.getElementById("formSubmitBtn").textContent = "Update Group";
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
 
 function filterGroups() {
   const el = document.getElementById("groupFilter");
@@ -3475,19 +3555,10 @@ async function initProgramsPage() {
   if (!table) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   programIsAdmin = me.roles.includes("admin");
 
@@ -3506,9 +3577,7 @@ async function initProgramsPage() {
 
   // Load departments
   try {
-    const deptRes = await fetch(API + "/programs/departments", {
-      headers: { "Authorization": "Bearer " + token },
-    });
+    const deptRes = await fetch(API + "/programs/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       const depts = await deptRes.json();
       const sel = document.getElementById("department_id");
@@ -3517,13 +3586,9 @@ async function initProgramsPage() {
           depts.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
       }
     }
-  } catch (e) {
-    console.error("Failed to load departments", e);
-  }
+  } catch (e) { console.error(e); }
 
   const form = document.getElementById("programForm");
-
-  // Live validation
   ["program_code", "program_name", "department_id"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -3535,7 +3600,6 @@ async function initProgramsPage() {
     });
   });
 
-  // Submit
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const formMsg = document.getElementById("formMsg");
@@ -3550,86 +3614,53 @@ async function initProgramsPage() {
       program_code: document.getElementById("program_code").value.trim(),
       program_name: document.getElementById("program_name").value.trim(),
       department_id: parseInt(document.getElementById("department_id").value, 10),
+      tracks: document.getElementById("tracks").value.trim() || null, // ★ 新增
     };
 
-    const url = editingProgramId
-      ? API + "/programs/" + editingProgramId
-      : API + "/programs";
+    const url = editingProgramId ? API + "/programs/" + editingProgramId : API + "/programs";
     const method = editingProgramId ? "PUT" : "POST";
 
     const r = await fetch(url, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
     });
     const data = await r.json();
 
     if (!r.ok) {
-      const detail = data.detail || "Failed";
-      if (detail.toLowerCase().includes("code")) {
-        document.getElementById("program_codeMsg").textContent = detail;
-        document.getElementById("program_code").classList.add("input-error");
-      } else if (detail.toLowerCase().includes("name")) {
-        document.getElementById("program_nameMsg").textContent = detail;
-        document.getElementById("program_name").classList.add("input-error");
-      } else {
-        formMsg.style.color = "#dc2626";
-        formMsg.textContent = detail;
-      }
+      formMsg.style.color = "#dc2626";
+      formMsg.textContent = data.detail || "Failed";
       return;
     }
 
     formMsg.style.color = "#16a34a";
     formMsg.textContent = editingProgramId ? "Program updated" : "Program created";
-    showNotice(editingProgramId ? "Program updated" : "Program created", "success");
-
     editingProgramId = null;
     document.getElementById("formSubmitBtn").textContent = "Save Program";
     document.getElementById("formTitle").textContent = "Add Program";
     form.reset();
-
-    ["program_code", "program_name", "department_id"].forEach((id) => {
-      const msgEl = document.getElementById(id + "Msg");
-      if (msgEl) msgEl.textContent = "";
-      const inputEl = document.getElementById(id);
-      if (inputEl) inputEl.classList.remove("input-error");
-    });
-
     loadPrograms();
   });
 
   loadPrograms();
 }
 
-
 async function loadPrograms() {
   const tbody = document.getElementById("programTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/programs", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="5">Failed to load programs</td></tr>`;
-    return;
-  }
+  const res = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="6">Failed to load</td></tr>`; return; }
   const programs = await res.json();
 
   document.getElementById("countLabel").textContent = `${programs.length} program(s)`;
 
-  if (programs.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No programs yet.</td></tr>`;
-    return;
-  }
-
   tbody.innerHTML = programs.map(p => `
     <tr>
-      <td><span class="badge-code">${p.program_code}</span></td>
+      <td><span class="badge badge-code">${p.program_code}</span></td>
       <td><b>${p.program_name}</b></td>
-      <td><span class="badge-dept">${p.department_name || "-"}</span></td>
+      <td><span class="badge badge-dept">${p.department_name || "-"}</span></td>
+      <td>${p.tracks ? `<span class="badge" style="background:#dcfce7;color:#166534;">${p.tracks}</span>` : "-"}</td>
       <td>${p.group_count}</td>
       ${programIsAdmin ? `
         <td>
@@ -3641,11 +3672,8 @@ async function loadPrograms() {
   `).join("");
 }
 
-
 async function editProgram(id) {
-  const res = await fetch(API + "/programs", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const p = list.find(x => x.id === id);
@@ -3654,6 +3682,7 @@ async function editProgram(id) {
   document.getElementById("program_code").value = p.program_code;
   document.getElementById("program_name").value = p.program_name;
   document.getElementById("department_id").value = p.department_id;
+  document.getElementById("tracks").value = p.tracks || ""; // ★ 回填
 
   editingProgramId = id;
   document.getElementById("formTitle").textContent = "Edit Program";
@@ -3682,19 +3711,122 @@ async function deleteProgram(id) {
   loadPrograms();
 }
 
+
+// ============================================================
+// Prepare Scheduling Data (US-12)
+// ============================================================
+
+async function initValidationPage() {
+  const btn = document.querySelector(".btn-check");
+  if (!btn) return;
+
+  const token = getToken();
+  if (!token) {
+    window.location.href = "/login.html";
+    return;
+  }
+}
+
+async function runValidation() {
+  const summaryBox = document.getElementById("summaryBox");
+  const summaryGrid = document.getElementById("summaryGrid");
+  const banner = document.getElementById("resultBanner");
+  const list = document.getElementById("issueList");
+
+  banner.className = "banner";
+  banner.textContent = "Running validation...";
+  banner.classList.add("show", "ok");
+
+  list.innerHTML = "";
+  summaryBox.style.display = "none";
+
+  const res = await fetch(API + "/validation/report", {
+    headers: { "Authorization": "Bearer " + getToken() },
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    banner.className = "banner show fail";
+    banner.innerHTML = `<span>Failed to run validation.</span>`;
+    return;
+  }
+
+  // Summary cards
+  const s = data.summary;
+  summaryGrid.innerHTML = `
+    <div class="summary-card">
+      <div class="label">Active Semester</div>
+      <div class="value" style="font-size:14px;">${s.active_semester || "None"}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Courses</div>
+      <div class="value">${s.courses}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Teachers</div>
+      <div class="value">${s.teachers}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Rooms</div>
+      <div class="value">${s.rooms}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Student Groups</div>
+      <div class="value">${s.student_groups}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Active Slots</div>
+      <div class="value">${s.active_slots}</div>
+    </div>
+  `;
+  summaryBox.style.display = "block";
+
+  // Banner
+  if (data.ok) {
+    banner.className = "banner show ok";
+    banner.innerHTML = `<span>✓ All data is valid. Ready to generate.</span>`;
+  } else {
+    banner.className = "banner show fail";
+    banner.innerHTML = `
+      <span class="count">${data.error_count}</span>
+      <span>error(s) found. Fix them before generating the timetable.</span>
+    `;
+  }
+
+  // Issue list
+  if (data.issues.length === 0) {
+    list.innerHTML = `<p style="font-size:13px;color:#888;">No issues detected.</p>`;
+    return;
+  }
+
+  list.innerHTML = data.issues.map(i => {
+    const icon = i.severity === "error" ? "⛔" : "⚠";
+    return `
+      <div class="issue-item ${i.severity}">
+        <div class="icon">${icon}</div>
+        <div class="body">
+          <span class="type">${i.category}</span>
+          <span>${i.message}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+
 // ============================================================
 // Shared Sidebar
 // ============================================================
 
 const SIDEBAR_ITEMS = [
-  // ---- Sprint 1 ----
+  // ---- Sprint 1: Base Configuration ----
   { href: "/dashboard.html",        label: "Dashboard",             roles: ["admin", "teacher", "student"], sprint: 1 },
-  { href: "/availability.html",     label: "My Availability",       roles: ["admin", "teacher"],            sprint: 1 },
   { href: "/rooms.html",            label: "Manage Rooms",          roles: ["admin"],                       sprint: 1 },
   { href: "/teachers.html",         label: "Manage Faculty",        roles: ["admin"],                       sprint: 1 },
   { href: "/courses.html",          label: "Manage Curriculum",     roles: ["admin"],                       sprint: 1 },
+  { href: "/availability.html",     label: "My Availability",       roles: ["admin", "teacher"],            sprint: 1 },
 
-  // ---- Sprint 2 ----
+  // ---- Sprint 2: Academic Structure & Constraints ----
   { href: "/programs.html",         label: "Manage Programs",       roles: ["admin"],                       sprint: 2 },
   { href: "/semesters.html",        label: "Manage Semesters",      roles: ["admin"],                       sprint: 2 },
   { href: "/student-groups.html",   label: "Manage Student Groups", roles: ["admin"],                       sprint: 2 },
@@ -3702,25 +3834,24 @@ const SIDEBAR_ITEMS = [
   { href: "/constraints.html",      label: "Hard Constraints",      roles: ["admin"],                       sprint: 2 },
   { href: "/soft-constraints.html", label: "Soft Constraints",      roles: ["admin"],                       sprint: 2 },
 
-  // ---- Sprint 3 (hidden until unlocked) ----
+  // ---- Sprint 3: Scheduling Engine (US-12 ~ US-16) ----
+  { href: "/validation.html",       label: "Prepare Data",          roles: ["admin"],                       sprint: 3 },
   { href: "/generator.html",        label: "AI Generator",          roles: ["admin"],                       sprint: 3 },
-  { href: "/room-fitting.html",     label: "Room Fitting",          roles: ["admin"],                       sprint: 3 },
+  { href: "/schedule.html",         label: "Schedule Grid",         roles: ["admin"],                       sprint: 3 },
 
-  // ---- Sprint 4 (hidden until unlocked) ----
-  { href: "/schedule.html",         label: "Schedule Grid",         roles: ["admin", "teacher", "student"], sprint: 4 },
+
+  // ---- Sprint 4: Interactive Grid & Review (US-17 ~ US-20) ----
+  { href: "/personal-timetable.html", label: "My Timetable",        roles: ["teacher", "student"],          sprint: 4 },
+  { href: "/room-fitting.html",     label: "Smart Room Fitting",    roles: ["admin"],                       sprint: 4 },
+
+  // ---- Sprint 5: Analytics & System Management (US-27 ~ US-31) ----
+  { href: "/analytics.html",        label: "Analytics & Reports",   roles: ["admin"],                       sprint: 5 },
+  { href: "/audit-log.html",        label: "Audit Log",             roles: ["admin"],                       sprint: 5 },
 ];
 
-// Change this number to unlock more sprints.
-// 2 = show only Sprint 1 + 2 (current demo)
-// 3 = show Sprint 3 features too
-// 4 = show everything (full system)
-const CURRENT_SPRINT = 2;
+const CURRENT_SPRINT = 3;
 
-const SIDEBAR_ACTIONS = [
-  { action: "timetable", label: "View Timetable", roles: ["admin", "teacher", "student"] },
-  { action: "export",    label: "Export",         roles: ["admin", "teacher"] },
-  { action: "requests",  label: "Requests",       roles: ["admin"] },
-];
+const SIDEBAR_ACTIONS = [];
 
 const SIDEBAR_CSS = `
   .app-layout { display: flex; min-height: 100vh; }
@@ -3796,13 +3927,11 @@ function renderSidebar() {
     `<button onclick="go('${a.action}')">${a.label}</button>`
   ).join("");
 
-  mount.outerHTML = `
+    mount.outerHTML = `
     <aside class="sidebar">
       <div class="brand">Timetable System</div>
       <h3>Navigation</h3>
       ${navHTML}
-      <h3>Actions</h3>
-      ${actionsHTML}
     </aside>
   `;
 }
@@ -3825,4 +3954,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initSemestersPage();
   initTimeSlotsPage();
   initProgramsPage();
+  initValidationPage();
 });

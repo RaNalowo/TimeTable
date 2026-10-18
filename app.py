@@ -20,6 +20,7 @@ from routes.room_fitting_routes import router as room_fitting_router
 from routes.semester_routes import router as semester_router
 from routes.time_slot_routes import router as time_slot_router
 from routes.program_routes import router as program_router
+from routes.validation_routes import router as validation_router
 
 
 
@@ -52,6 +53,7 @@ app.include_router(room_fitting_router)
 app.include_router(semester_router)
 app.include_router(time_slot_router)
 app.include_router(program_router)
+app.include_router(validation_router)
 
 
 
@@ -121,3 +123,7 @@ def time_slots_page():
 @app.get("/programs.html")
 def programs_page():
     return FileResponse("templates/programs.html")
+
+@app.get("/validation.html")
+def validation_page():
+    return FileResponse("templates/validation.html")

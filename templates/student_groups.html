@@ -28,45 +28,27 @@
       align-items: start;
     }
     .form-field { display: flex; flex-direction: column; gap: 4px; }
-    form#groupForm input, form#groupForm select {
+    input, select {
       padding: 8px 10px; border: 1px solid #ccc;
-      border-radius: 6px; font-size: 14px; width: 100%;
+      border-radius: 6px; font-size: 14px; width: 100%; height: 38px;
     }
-    form#groupForm input.input-error, form#groupForm select.input-error {
-      border: 2px solid #dc2626;
-    }
-    form#groupForm button {
+    input:disabled, select:disabled { background: #e5e7eb; cursor: not-allowed; }
+    input.input-error, select.input-error { border: 2px solid #dc2626; }
+    button[type="submit"] {
       padding: 9px 14px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer;
-      height: 38px; align-self: start;
+      border: none; border-radius: 6px; cursor: pointer; height: 38px;
     }
-    form#groupForm button:hover { background: #1d4ed8; }
-
     .field-msg { color: #dc2626; font-size: 12px; min-height: 16px; }
-    #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
     th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f9fafb; font-weight: 600; }
-    tr:hover { background: #f9fafb; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; background: #e0e7ff; color: #3730a3; }
+    .badge-dept { background: #fef3c7; color: #92400e; }
+    .badge-track { background: #dcfce7; color: #166534; }
 
-    .badge {
-      display: inline-block; padding: 2px 10px; border-radius: 10px;
-      font-size: 12px; background: #e0e7ff; color: #3730a3;
-    }
-    .badge-dept {
-      display: inline-block; padding: 2px 10px; border-radius: 10px;
-      font-size: 12px; background: #fef3c7; color: #92400e;
-    }
-    .btn-edit {
-      padding: 4px 10px; background: #0891b2; color: #fff;
-      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
-      margin-right: 4px;
-    }
-    .btn-del {
-      padding: 4px 10px; background: #dc2626; color: #fff;
-      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
-    }
+    .btn-edit { padding: 4px 10px; background: #0891b2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; margin-right: 4px; }
+    .btn-del { padding: 4px 10px; background: #dc2626; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -76,46 +58,45 @@
 
       <header>
         <h1>Manage Student Groups</h1>
-        <span id="countLabel" style="font-size:13px;color:#666;"></span>
+        <span id="countLabel" style="font-size:13px; color:#666;"></span>
       </header>
 
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Student Group</h2>
-
         <form id="groupForm" novalidate>
           <div class="form-field">
-            <input id="group_code" placeholder="Group code (e.g., IS-23-A / CS-24-B)" />
+            <input id="group_code" placeholder="Group code (e.g., IS-23-AI)" />
             <div class="field-msg" id="group_codeMsg"></div>
           </div>
-
           <div class="form-field">
             <select id="department" onchange="onDepartmentChange()">
               <option value="">-- Select department --</option>
             </select>
             <div class="field-msg" id="departmentMsg"></div>
           </div>
-
           <div class="form-field">
-            <select id="program">
+            <select id="program" onchange="onGroupProgramChange()">
               <option value="">-- Select program --</option>
             </select>
             <div class="field-msg" id="programMsg"></div>
           </div>
-
+          <div class="form-field">
+            <select id="track" disabled>
+              <option value="">-- Select track --</option>
+            </select>
+            <div class="field-msg" id="trackMsg"></div>
+          </div>
           <div class="form-field">
             <input id="year_override" type="text" inputmode="numeric" placeholder="Year (auto, or override)" />
             <div class="field-msg" id="year_overrideMsg"></div>
           </div>
-
           <div class="form-field">
-            <input id="student_count" type="text" inputmode="numeric" placeholder="Student count (1-25)" />
+            <input id="student_count" type="text" inputmode="numeric" placeholder="Student count" />
             <div class="field-msg" id="student_countMsg"></div>
           </div>
-
           <button type="submit" id="formSubmitBtn">Save Group</button>
         </form>
-
-        <p id="formMsg"></p>
+        <p id="formMsg" style="font-size:13px;"></p>
       </div>
 
       <div class="panel">
@@ -128,6 +109,7 @@
             <tr>
               <th>Group Code</th>
               <th>Program</th>
+              <th>Track</th>       <!-- ★ 补上这一列 -->
               <th>Department</th>
               <th>Enrolled</th>
               <th>Current Year</th>
@@ -141,39 +123,6 @@
 
     </main>
   </div>
-
-  <!-- Global notice -->
-  <div id="pageNotice" style="
-    display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
-    padding:12px 20px; border-radius:8px; z-index:3000;
-    box-shadow:0 4px 12px rgba(0,0,0,0.15); font-size:14px;">
-  </div>
-
-  <!-- Confirm modal -->
-  <div id="confirmModal" style="
-    display:none; position:fixed; inset:0;
-    background:rgba(0,0,0,0.5); z-index:2500;
-    align-items:center; justify-content:center;">
-    <div style="
-      background:#fff; padding:24px; border-radius:12px;
-      width:380px; max-width:90%;">
-      <h3 id="confirmTitle" style="margin-top:0; font-size:16px;">Confirm</h3>
-      <p id="confirmText" style="font-size:13px;color:#555;margin:12px 0 20px;"></p>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button onclick="closeConfirm(false)"
-                style="padding:8px 16px; background:#6b7280; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
-          Cancel
-        </button>
-        <button id="confirmBtn" onclick="closeConfirm(true)"
-                style="padding:8px 16px; background:#dc2626; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
-          Delete
-        </button>
-      </div>
-    </div>
-  </div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>

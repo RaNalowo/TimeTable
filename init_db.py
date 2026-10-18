@@ -1,11 +1,12 @@
 import os
 import json
+import csv
 
 from db.database import Base, engine, SessionLocal
 from db.models import (
     User, Role, Room, Teacher, StudentGroup, Course,
     Department, Program, Semester, TimeSlot, PreferenceWindow,
-    Constraint, SoftConstraint, course_target_programs
+    Constraint, SoftConstraint
 )
 from services.security import hash_password
 
@@ -52,34 +53,39 @@ print(f"Seeded {len(dept_map)} departments")
 # 3. Programs (2)
 # ============================================================
 
+# ★ 这里加了 Tracks 字段
 PROGRAMS = [
-    ("0103", "Information Systems", "Engineering and Natural Sciences"),
-    ("0104", "Computer Science",      "Engineering and Natural Sciences"),
+    ("0103", "Information Systems", "Engineering and Natural Sciences", "AI,CYBER,FRONT,BACK"),
+    ("0104", "Computer Science",      "Engineering and Natural Sciences", "AI,CYBER,SOFT,HARD"),
 ]
 
 program_map = {}
-for code, name, dept_name in PROGRAMS:
+for code, name, dept_name, tracks_str in PROGRAMS:
     p = db.query(Program).filter_by(program_code=code).first()
     if not p:
         p = Program(
             program_code=code,
             program_name=name,
             department_id=dept_map[dept_name],
+            tracks=tracks_str,  # ★ 赋给数据库模型
         )
         db.add(p)
         db.commit()
         db.refresh(p)
+    else:
+        # 如果数据库已经有这个 program，也强制更新一下 tracks，防止没生效
+        p.tracks = tracks_str
+        db.commit()
     program_map[name] = p.id
 
 print(f"Seeded {len(program_map)} programs")
 
 
 # ============================================================
-# 4. Teachers (5 with account + 44 without)
+# 4. Teachers
 # ============================================================
 
 def load_teachers_from_csv(path="teachers.csv"):
-    import csv
     if not os.path.exists(path):
         print(f"{path} not found, skipping")
         return
@@ -104,7 +110,6 @@ def load_teachers_from_csv(path="teachers.csv"):
 
             user_id = None
             if email in ACCOUNT_EMAILS:
-                # Create matching user account
                 if not db.query(User).filter_by(email=email).first():
                     u = User(
                         email=email,
@@ -138,11 +143,10 @@ load_teachers_from_csv()
 
 
 # ============================================================
-# 5. Student Groups (22 from CSV)
+# 5. Student Groups (with sub_group_count & track)
 # ============================================================
 
 def load_groups_from_csv(path="student_groups.csv"):
-    import csv
     if not os.path.exists(path):
         print(f"{path} not found, skipping")
         return
@@ -161,6 +165,8 @@ def load_groups_from_csv(path="student_groups.csv"):
                 program_id=program_id,
                 enrollment_year=int(row["enrollment_year"]) if row.get("enrollment_year") else None,
                 student_count=int(row["student_count"]) if row.get("student_count") else 0,
+                sub_group_count=int(row["sub_group_count"]) if row.get("sub_group_count") else 3, # ★ 新增
+                track=row.get("track", "").strip() or None,                                      # ★ 新增
             ))
     db.commit()
     print("Imported student groups from CSV")
@@ -170,11 +176,10 @@ load_groups_from_csv()
 
 
 # ============================================================
-# 6. Rooms (from CSV)
+# 6. Rooms
 # ============================================================
 
 def load_rooms_from_csv(path="rooms.csv"):
-    import csv
     if not os.path.exists(path):
         print(f"{path} not found, skipping")
         return
@@ -201,13 +206,17 @@ load_rooms_from_csv()
 
 
 # ============================================================
-# 7. Courses (from CSV, with course_target_programs)
+# 7. Courses (按 program 分文件导入)
 # ============================================================
 
-def load_courses_from_csv(path="courses.csv"):
-    import csv
+def load_courses_from_csv(path, program_name):
     if not os.path.exists(path):
         print(f"{path} not found, skipping")
+        return
+
+    program = db.query(Program).filter_by(program_name=program_name).first()
+    if not program:
+        print(f"[WARN] Program '{program_name}' not found, skipping {path}")
         return
 
     with open(path, "r", encoding="utf-8-sig") as f:
@@ -220,38 +229,32 @@ def load_courses_from_csv(path="courses.csv"):
             dept_name = row.get("department", "").strip()
             dept_id = dept_map.get(dept_name)
 
+            # 处理布尔值 0/1
+            is_elective_val = row.get("is_elective", "0").strip()
+            is_elective = is_elective_val in ("1", "True", "true")
+
             c = Course(
                 course_code=code,
                 course_name=row["course_name"].strip(),
                 credits=int(row["credits"]) if row.get("credits") else 5,
                 semester_level=row.get("semester_level", "").strip() or None,
                 total_hours=int(row["total_hours"]),
-                lecture_hours=int(row["lecture_hours"]),
-                practice_hours=int(row["practice_hours"]),
-                lab_hours=int(row["lab_hours"]),
+                lecture_hours=int(row["lecture_hours"] or 0),
+                practice_hours=int(row["practice_hours"] or 0),
+                lab_hours=int(row["lab_hours"] or 0),
                 department_id=dept_id,
+                program_id=program.id,            # ★ 归属 program
+                is_elective=is_elective,          # ★ 是否选修
+                track=row.get("track", "").strip() or None, # ★ 方向
             )
             db.add(c)
             db.commit()
-            db.refresh(c)
 
-            # target_groups → course_target_programs
-            target_str = row.get("target_groups", "").strip()
-            if target_str:
-                for prog_name in [p.strip() for p in target_str.split(",") if p.strip()]:
-                    prog_id = program_map.get(prog_name)
-                    if prog_id:
-                        db.execute(
-                            course_target_programs.insert().values(
-                                course_id=c.id, program_id=prog_id
-                            )
-                        )
-                db.commit()
-
-    print("Imported courses from CSV")
+    print(f"Imported courses from {path} → {program_name}")
 
 
-load_courses_from_csv()
+load_courses_from_csv("courses_is.csv", "Information Systems")
+load_courses_from_csv("courses_cs.csv", "Computer Science")
 
 
 # ============================================================
@@ -349,7 +352,6 @@ if db.query(SoftConstraint).count() == 0:
 # 13. Default Users (admin + 5 students)
 # ============================================================
 
-# Admin
 admin_role = db.query(Role).filter_by(name="admin").first()
 if not db.query(User).filter_by(email="admin@sdu.edu.kz").first():
     admin = User(
@@ -365,13 +367,13 @@ if not db.query(User).filter_by(email="admin@sdu.edu.kz").first():
     print("Created admin@sdu.edu.kz")
 
 
-# 5 Students
+# ★ 修正了组代码（IS-23-A → IS-23-AI 等）
 STUDENTS = [
-    ("230103191", "IS-23-A", "Aibek Nurlan"),
-    ("230103192", "IS-23-B", "Dana Bekova"),
-    ("230103193", "IS-23-C", "Arman Serikov"),
-    ("240103101", "IS-24-A", "Aigerim Zhumabek"),
-    ("240103102", "IS-24-B", "Dias Tolegenov"),
+    ("230103191", "IS-23-AI", "Aibek Nurlan"),
+    ("230103192", "IS-23-CYBER", "Dana Bekova"),
+    ("230103193", "IS-23-FRONT", "Arman Serikov"),
+    ("240103101", "IS-24-BACK", "Aigerim Zhumabek"),
+    ("240103102", "IS-24-AI", "Dias Tolegenov"),
 ]
 
 student_role = db.query(Role).filter_by(name="student").first()

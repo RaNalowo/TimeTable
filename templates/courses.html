@@ -22,56 +22,91 @@
     }
     .panel h2 { margin-top: 0; font-size: 16px; }
 
+    /* 表单 Grid 布局 */
     form#courseForm {
-      display: grid; gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      display: grid; gap: 16px;
+      /* 稍微调大最小宽度，防止下拉框被挤压 */
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
       align-items: start;
     }
-    .form-field { display: flex; flex-direction: column; gap: 4px; }
+
+    .form-field {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+
     form#courseForm input, form#courseForm select {
       padding: 8px 10px; border: 1px solid #ccc;
       border-radius: 6px; font-size: 14px; width: 100%;
+      height: 38px; /* 统一高度 */
     }
-    form#courseForm input.input-error { border: 2px solid #dc2626; }
+
+    form#courseForm input:disabled, form#courseForm select:disabled {
+      background: #e5e7eb; color: #9ca3af; cursor: not-allowed;
+    }
+
+    form#courseForm input.input-error, form#courseForm select.input-error {
+      border: 2px solid #dc2626;
+    }
+
+    .checkbox-field {
+      display: flex; align-items: center; gap: 8px; height: 38px;
+      font-size: 14px; color: #333; white-space: nowrap;
+    }
+    .checkbox-field input[type="checkbox"] {
+      width: 16px; height: 16px; margin: 0; cursor: pointer;
+    }
+
     form#courseForm button {
       padding: 9px 14px; background: #2563eb; color: #fff;
       border: none; border-radius: 6px; cursor: pointer;
-      height: 38px; align-self: start;
+      height: 38px; font-weight: 600; font-size: 14px;
+      transition: background 0.15s;
     }
     form#courseForm button:hover { background: #1d4ed8; }
 
-    #groupCheckboxes {
-      grid-column: 1 / -1;
-      border: 1px solid #ccc; border-radius: 6px;
-      padding: 10px; background: #fff;
-    }
-    #groupCheckboxes .title { font-size: 12px; color: #888; margin-bottom: 8px; }
-    #groupList { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; }
-    #groupList label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-
     .field-msg { color: #dc2626; font-size: 12px; min-height: 16px; }
-    #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
+    #formMsg { margin: 12px 0 0; font-size: 14px; min-height: 18px; font-weight: 500; }
 
+    /* 表格 */
     table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
-    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
-    th { background: #f9fafb; font-weight: 600; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9fafb; font-weight: 600; color: #374151; }
     tr:hover { background: #f9fafb; }
+
     .badge {
       display: inline-block; padding: 2px 10px; border-radius: 10px;
       font-size: 12px; background: #e0e7ff; color: #3730a3;
+      white-space: nowrap;
     }
     .split {
       font-family: monospace; font-size: 12px;
       background: #f3f4f6; padding: 2px 6px; border-radius: 4px;
     }
+
     .btn-edit {
       padding: 4px 10px; background: #0891b2; color: #fff;
       border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
       margin-right: 4px;
     }
+    .btn-edit:hover { background: #0e7490; }
+
     .btn-del {
       padding: 4px 10px; background: #dc2626; color: #fff;
       border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    .btn-del:hover { background: #b91c1c; }
+
+    /* 过滤栏 */
+    .toolbar-filter {
+      display: flex; gap: 12px; align-items: center; margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .toolbar-filter input, .toolbar-filter select {
+      padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px;
+      font-size: 14px; outline: none;
+    }
+    .toolbar-filter input:focus, .toolbar-filter select:focus {
+      border-color: #2563eb;
     }
   </style>
 </head>
@@ -84,10 +119,12 @@
         <h1>Manage Course Curriculum</h1>
       </header>
 
+      <!-- Add Course Form -->
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Course</h2>
 
         <form id="courseForm" novalidate>
+          <!-- Row 1 -->
           <div class="form-field">
             <input id="course_code" placeholder="Course Code (e.g., CS102)" />
             <div class="field-msg" id="course_codeMsg"></div>
@@ -99,12 +136,31 @@
           </div>
 
           <div class="form-field">
+            <select id="department" onchange="onCourseDeptChange()">
+              <option value="">-- Select department --</option>
+              <option value="Engineering and Natural Sciences">Engineering and Natural Sciences</option>
+              <option value="Education and Humanities">Education and Humanities</option>
+              <option value="Business School">Business School</option>
+              <option value="Law and Social Sciences">Law and Social Sciences</option>
+            </select>
+            <div class="field-msg" id="departmentMsg"></div>
+          </div>
+
+          <div class="form-field">
+            <select id="program_id" onchange="onCourseProgramChange()">
+              <option value="">-- Select program --</option>
+            </select>
+            <div class="field-msg" id="program_idMsg"></div>
+          </div>
+
+          <div class="form-field">
             <input id="credits" type="text" inputmode="numeric" placeholder="ECTS Credits (1-30)" />
             <div class="field-msg" id="creditsMsg"></div>
           </div>
 
+          <!-- Row 2 -->
           <div class="form-field">
-            <input id="semester_level" placeholder="Semester Level (e.g., Year 2, Fall)" />
+            <input id="semester_level" placeholder="Semester Level (e.g., Year 2 Fall)" />
             <div class="field-msg" id="semester_levelMsg"></div>
           </div>
 
@@ -128,43 +184,52 @@
             <div class="field-msg" id="lab_hoursMsg"></div>
           </div>
 
-          <div id="groupCheckboxes">
-            <div class="title">Target Student Groups</div>
-            <div id="groupList"></div>
+          <!-- Row 3: Elective & Track -->
+          <div class="checkbox-field">
+            <input type="checkbox" id="is_elective" onchange="onElectiveChange()" />
+            <label for="is_elective">Is Elective?</label>
           </div>
 
           <div class="form-field">
-            <select id="department">
-              <option value="">-- Select department --</option>
-              <option value="Engineering and Natural Sciences">Engineering and Natural Sciences</option>
-              <option value="Education and Humanities">Education and Humanities</option>
-              <option value="Business School">Business School</option>
-              <option value="Law and Social Sciences">Law and Social Sciences</option>
+            <select id="track" disabled>
+              <option value="">-- Select track --</option>
             </select>
-            <div class="field-msg" id="departmentMsg"></div>
+            <div class="field-msg" id="trackMsg"></div>
           </div>
 
-          <button type="submit" id="formSubmitBtn">Save Course</button>
+          <button type="submit" id="formSubmitBtn" style="grid-column: 1 / -1; width: 200px; margin-top: 10px;">
+            Save Course
+          </button>
         </form>
 
         <p id="formMsg"></p>
       </div>
 
+      <!-- Curriculum Directory Table -->
       <div class="panel">
         <h2>Curriculum Directory</h2>
-        <p id="accessMsg" style="font-size:13px;color:#888;"></p>
-        <input id="courseFilter" placeholder="Filter courses..." oninput="filterCourses()"
-               style="margin-bottom:8px; padding:6px 10px; width:240px; border:1px solid #ccc; border-radius:6px;" />
+        <p id="accessMsg" style="font-size:13px;color:#888; margin-top:-5px; margin-bottom: 15px;"></p>
+
+        <!-- Filter 区域 -->
+        <div class="toolbar-filter">
+          <input id="courseFilter" placeholder="Search courses..." oninput="filterCourses()" style="width:240px;" />
+          <select id="filterProgram" onchange="filterCourses()">
+            <option value="all">All Programs</option>
+            <!-- dynamically filled by JS -->
+          </select>
+        </div>
+
         <table>
           <thead>
             <tr>
               <th>Code</th>
               <th>Name</th>
+              <th>Program</th>
               <th>Credits</th>
               <th>Level</th>
               <th>Split</th>
-              <th>Total</th>
-              <th>Target Groups</th>
+              <th>Type</th>
+              <th>Track</th>
               <th>Department</th>
               <th id="actionCol">Actions</th>
             </tr>
@@ -176,11 +241,11 @@
     </main>
   </div>
 
-    <!-- Global notice -->
+  <!-- Global notice -->
   <div id="pageNotice" style="
     display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
     padding:12px 20px; border-radius:8px; z-index:3000;
-    box-shadow:0 4px 12px rgba(0,0,0,0.15); font-size:14px;">
+    box-shadow:0 4px 12px rgba(0,0,0,0.15); font-size:14px; font-weight:500;">
   </div>
 
   <!-- Confirm modal -->
@@ -190,18 +255,18 @@
     align-items:center; justify-content:center;">
     <div style="
       background:#fff; padding:24px; border-radius:12px;
-      width:380px; max-width:90%;">
-      <h3 id="confirmTitle" style="margin-top:0; font-size:16px;">Confirm</h3>
-      <p id="confirmText" style="font-size:13px;color:#555;margin:12px 0 20px;"></p>
+      width:380px; max-width:90%; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+      <h3 id="confirmTitle" style="margin-top:0; font-size:18px;">Confirm</h3>
+      <p id="confirmText" style="font-size:14px;color:#555;margin:12px 0 24px;"></p>
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button onclick="closeConfirm(false)"
-                style="padding:8px 16px; background:#6b7280; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
+                style="padding:8px 16px; background:#f3f4f6; color:#374151;
+                       border:none; border-radius:6px; cursor:pointer; font-size:14px;">
           Cancel
         </button>
         <button id="confirmBtn" onclick="closeConfirm(true)"
                 style="padding:8px 16px; background:#dc2626; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
+                       border:none; border-radius:6px; cursor:pointer; font-size:14px;">
           Delete
         </button>
       </div>

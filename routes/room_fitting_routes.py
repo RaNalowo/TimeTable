@@ -26,13 +26,25 @@ REQUIRED_EQUIPMENT = {
 
 class SuggestRequest(BaseModel):
     session_type: str              # lecture | practice | lab
-    target_groups: list[str]       # e.g. ["CS-2301", "SE-2301"]
+    target_groups: list[str]       # e.g. ["IS-26-AI", "CS-23-A"]
     course_code: str | None = None
 
 
-def _required_seats(db: Session, target_groups: list[str]) -> int:
-    sizes = {g.group_code: g.student_count for g in db.query(StudentGroup).all()}
-    return sum(sizes.get(g, 0) for g in target_groups)
+def _required_seats(db: Session, target_groups: list[str], session_type: str) -> int:
+    """
+    Calculate required seats based on session type.
+    - Lecture: use total student_count
+    - Practice/Lab: use sub-group size (student_count / sub_group_count)
+    """
+    groups = db.query(StudentGroup).filter(StudentGroup.group_code.in_(target_groups)).all()
+    total = 0
+    for g in groups:
+        if session_type in ("practice", "lab"):
+            sub_count = max(g.sub_group_count, 1)
+            total += g.student_count // sub_count
+        else:
+            total += g.student_count
+    return total
 
 
 def _room_has_equipment(room: Room, required: list[str]) -> tuple[bool, list[str]]:
@@ -69,7 +81,7 @@ def _score_room(room, required_seats, session_type):
 
 
 def suggest_rooms(db: Session, session_type: str, target_groups: list[str]):
-    required_seats = _required_seats(db, target_groups)
+    required_seats = _required_seats(db, target_groups, session_type)
     rooms = db.query(Room).all()
 
     results = []
@@ -147,7 +159,7 @@ def check_room(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    required_seats = _required_seats(db, data.target_groups)
+    required_seats = _required_seats(db, data.target_groups, data.session_type)
     req_eq = REQUIRED_EQUIPMENT.get(data.session_type, [])
     gear_ok, missing = _room_has_equipment(room, req_eq)
     type_ok = room.room_type in REQUIRED_ROOM_TYPES.get(data.session_type, [])

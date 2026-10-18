@@ -1,0 +1,40 @@
+﻿course_code,course_name,credits,semester_level,total_hours,lecture_hours,practice_hours,lab_hours,department,is_elective,track
+CSS 105,Fundamentals of Programming 1,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+MAT 156,Discrete Mathematics,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+MDE 171,History of Kazakhstan,5,Year 1 Fall,3,2,1,0,Education and Humanities,0,
+SDS 103,Linear algebra,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+CSS 250,Electronics,5,Year 1 Fall,3,2,1,0,Engineering and Natural Sciences,0,
+CSS 114,Programming Fundamentals (Java) I,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 115,Programming Fundamentals (Python) I,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 331,Operating Systems,5,Year 1 Spring,3,2,1,0,Engineering and Natural Sciences,0,
+MAT 137,Mathematics for Information Systems 1,5,Year 1 Spring,4,2,2,0,Engineering and Natural Sciences,0,
+MDE 162,Law,5,Year 1 Spring,3,2,1,0,Education and Humanities,0,
+MAT 123,Linear Algebra,5,Year 1 Spring,4,2,2,0,Engineering and Natural Sciences,0,
+CSS 116,Programming Fundamentals (Java) II,5,Year 1 Spring,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 117,Programming Fundamentals (Python) II,5,Year 1 Spring,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 215,Introduction to Algorithms,5,Year 2 Fall,4,2,0,2,Engineering and Natural Sciences,0,
+CSS 217,Software Architecture and Design Patterns,5,Year 2 Fall,3,1,2,0,Engineering and Natural Sciences,0,
+MAT 138,Mathematics for Information Systems 2,5,Year 2 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+MDE 166,Entrepreneurship,5,Year 2 Fall,3,2,1,0,Education and Humanities,0,
+CSS 231,Web programming: front end,5,Year 2 Fall,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 260,Introduction to Cybersecurity,5,Year 2 Fall,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+CSS 254,Digital design,5,Year 2 Fall,3,1,2,0,Engineering and Natural Sciences,1,HARD
+INF 202,Database Management Systems 1,5,Year 2 Spring,3,1,2,0,Engineering and Natural Sciences,0,
+MAT 251,Probability and Mathematical Statistics,5,Year 2 Spring,4,2,2,0,Engineering and Natural Sciences,0,
+CSS 232,Web programming: back end,5,Year 2 Spring,4,2,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 262,Linux administration & Nix systems,5,Year 2 Spring,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+CSS 328,Introduction to Data Analysis,5,Year 2 Spring,3,2,1,0,Engineering and Natural Sciences,1,AI
+CSS 309,Low-level Architecture,5,Year 3 Fall,4,2,2,0,Engineering and Natural Sciences,1,HARD
+CSS 324,Introduction to Machine Learning,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,AI
+CSS 327,Introduction to Android Programming,5,Year 3 Fall,3,1,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 344,Blockchain Development and Smart Contracts,5,Year 3 Fall,3,1,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 346,FPGA Programming,5,Year 3 Fall,3,1,2,0,Engineering and Natural Sciences,1,HARD
+CSS 350,Cloud Computing,5,Year 3 Fall,3,1,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 305,Database Management Systems 2,5,Year 3 Spring,3,1,2,0,Engineering and Natural Sciences,1,SOFT
+CSS 214,Introduction to iOS Programming,5,Year 3 Spring,3,1,2,0,Engineering and Natural Sciences,1,SOFT
+INF 323,Data analysis,5,Year 3 Spring,4,2,2,0,Engineering and Natural Sciences,1,AI
+CSS 343,Introduction to Machine Learning,5,Year 3 Spring,3,1,2,0,Engineering and Natural Sciences,1,AI
+CSS 410,Research tools and methods,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,0,
+INF 406,Data Ethics & Applied Analytics,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,0,
+CSS 365,Ethical Hacking and Penetration Testing,5,Year 4 Fall,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+CSS 497,Pregraduational Internship,12,Year 4 Fall,8,0,8,0,Engineering and Natural Sciences,1,SOFT

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from db.database import get_db
 from db.models import (
-    Course, User, Program, Department, course_target_programs
+    Course, User, Program, Department
 )
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
@@ -21,22 +21,12 @@ class CourseRequest(BaseModel):
     lecture_hours: int = Field(ge=0, le=20)
     practice_hours: int = Field(ge=0, le=20)
     lab_hours: int = Field(ge=0, le=20)
-    target_groups: str | None = None     # comma-separated PROGRAM names
-    department: str | None = None        # department name (string)
 
-
-def get_course_target_groups(db: Session, course_id: int) -> str | None:
-    """Return comma-separated program names for a course."""
-    rows = db.execute(
-        course_target_programs.select().where(
-            course_target_programs.c.course_id == course_id
-        )
-    ).fetchall()
-    if not rows:
-        return None
-    prog_ids = [r.program_id for r in rows]
-    programs = db.query(Program).filter(Program.id.in_(prog_ids)).all()
-    return ", ".join(sorted(p.program_name for p in programs)) or None
+    # ★ 新架构字段
+    program_id: int
+    is_elective: bool = False
+    track: str | None = None
+    department: str | None = None  # department name (string)
 
 
 def course_to_dict(db: Session, c: Course):
@@ -44,6 +34,9 @@ def course_to_dict(db: Session, c: Course):
     if c.department_id:
         d = db.query(Department).filter_by(id=c.department_id).first()
         dept = d.name if d else None
+
+    prog = db.query(Program).filter_by(id=c.program_id).first()
+    prog_name = prog.program_name if prog else None
 
     return {
         "id": c.id,
@@ -55,7 +48,12 @@ def course_to_dict(db: Session, c: Course):
         "lecture_hours": c.lecture_hours,
         "practice_hours": c.practice_hours,
         "lab_hours": c.lab_hours,
-        "target_groups": get_course_target_groups(db, c.id),
+
+        "program_id": c.program_id,
+        "program_name": prog_name,
+        "is_elective": c.is_elective,
+        "track": c.track,
+
         "department": dept,
     }
 
@@ -72,40 +70,11 @@ def validate_hours(data: CourseRequest):
         )
 
 
-def save_target_groups(db: Session, course_id: int, target_str: str | None):
-    """Clear and re-insert course_target_programs rows."""
-    # Clear old
-    db.execute(
-        course_target_programs.delete().where(
-            course_target_programs.c.course_id == course_id
-        )
-    )
-
-    if not target_str:
-        db.commit()
-        return
-
-    names = [n.strip() for n in target_str.split(",") if n.strip()]
-    for name in names:
-        p = db.query(Program).filter_by(program_name=name).first()
-        if not p:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Target program not found: {name}",
-            )
-        db.execute(
-            course_target_programs.insert().values(
-                course_id=course_id, program_id=p.id
-            )
-        )
-    db.commit()
-
-
 # ---------- Routes ----------
 @router.get("")
 def list_courses(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
 ):
     courses = db.query(Course).order_by(Course.course_code).all()
     return [course_to_dict(db, c) for c in courses]
@@ -113,14 +82,19 @@ def list_courses(
 
 @router.post("")
 def create_course(
-    data: CourseRequest,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+        data: CourseRequest,
+        admin: User = Depends(require_role("admin")),
+        db: Session = Depends(get_db),
 ):
     if db.query(Course).filter_by(course_code=data.course_code).first():
         raise HTTPException(status_code=400, detail="Course code already exists")
 
     validate_hours(data)
+
+    # 检查 Program 是否存在
+    prog = db.query(Program).filter_by(id=data.program_id).first()
+    if not prog:
+        raise HTTPException(status_code=400, detail="Program not found")
 
     dept_id = None
     if data.department:
@@ -137,12 +111,13 @@ def create_course(
         practice_hours=data.practice_hours,
         lab_hours=data.lab_hours,
         department_id=dept_id,
+        program_id=data.program_id,
+        is_elective=data.is_elective,
+        track=data.track,
     )
     db.add(course)
     db.commit()
     db.refresh(course)
-
-    save_target_groups(db, course.id, data.target_groups)
 
     log_event(db, admin.id, "course_created", True, data.course_code)
     return course_to_dict(db, course)
@@ -150,10 +125,10 @@ def create_course(
 
 @router.put("/{course_id}")
 def update_course(
-    course_id: int,
-    data: CourseRequest,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+        course_id: int,
+        data: CourseRequest,
+        admin: User = Depends(require_role("admin")),
+        db: Session = Depends(get_db),
 ):
     course = db.query(Course).filter_by(id=course_id).first()
     if not course:
@@ -167,6 +142,11 @@ def update_course(
         raise HTTPException(status_code=400, detail="Course code already exists")
 
     validate_hours(data)
+
+    # 检查 Program 是否存在
+    prog = db.query(Program).filter_by(id=data.program_id).first()
+    if not prog:
+        raise HTTPException(status_code=400, detail="Program not found")
 
     dept_id = None
     if data.department:
@@ -182,10 +162,13 @@ def update_course(
     course.practice_hours = data.practice_hours
     course.lab_hours = data.lab_hours
     course.department_id = dept_id
+
+    course.program_id = data.program_id
+    course.is_elective = data.is_elective
+    course.track = data.track
+
     db.commit()
     db.refresh(course)
-
-    save_target_groups(db, course.id, data.target_groups)
 
     log_event(db, admin.id, "course_updated", True, f"course_id={course_id}")
     return course_to_dict(db, course)
@@ -193,20 +176,14 @@ def update_course(
 
 @router.delete("/{course_id}")
 def delete_course(
-    course_id: int,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+        course_id: int,
+        admin: User = Depends(require_role("admin")),
+        db: Session = Depends(get_db),
 ):
     course = db.query(Course).filter_by(id=course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    # Remove program links first
-    db.execute(
-        course_target_programs.delete().where(
-            course_target_programs.c.course_id == course_id
-        )
-    )
     db.delete(course)
     db.commit()
 

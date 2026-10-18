@@ -7,104 +7,57 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: sans-serif; background: #f3f4f6; margin: 0; }
-
-    header {
-      display: flex; justify-content: space-between; align-items: center;
-      background: #fff; padding: 16px 24px; border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
-      flex-wrap: wrap; gap: 12px;
-    }
+    header { background: #fff; padding: 16px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px; display: flex; justify-content: space-between; }
     header h1 { margin: 0; font-size: 20px; }
-
-    .panel {
-      background: #fff; padding: 20px; border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
-    }
-    .panel h2 { margin-top: 0; font-size: 16px; }
-
-    form#programForm {
-      display: grid; gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      align-items: start;
-    }
+    .panel { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px; }
+    form#programForm { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: start; }
     .form-field { display: flex; flex-direction: column; gap: 4px; }
-    form#programForm input, form#programForm select {
-      padding: 8px 10px; border: 1px solid #ccc;
-      border-radius: 6px; font-size: 14px; width: 100%;
-    }
-    form#programForm input.input-error, form#programForm select.input-error {
-      border: 2px solid #dc2626;
-    }
-    form#programForm button {
-      padding: 9px 14px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer;
-      height: 38px; align-self: start;
-    }
-    form#programForm button:hover { background: #1d4ed8; }
-
+    input, select { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; width: 100%; height: 38px; }
+    button[type="submit"] { padding: 9px 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; height: 38px; }
     .field-msg { color: #dc2626; font-size: 12px; min-height: 16px; }
-    #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
-
-    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
     th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f9fafb; font-weight: 600; }
-    tr:hover { background: #f9fafb; }
-
-    .badge-dept {
-      display: inline-block; padding: 2px 10px; border-radius: 10px;
-      font-size: 12px; background: #fef3c7; color: #92400e;
-    }
-    .badge-code {
-      display: inline-block; padding: 2px 8px; border-radius: 6px;
-      font-size: 12px; background: #e5e7eb; color: #374151;
-      font-family: monospace;
-    }
-    .btn-edit {
-      padding: 4px 10px; background: #0891b2; color: #fff;
-      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
-      margin-right: 4px;
-    }
-    .btn-del {
-      padding: 4px 10px; background: #dc2626; color: #fff;
-      border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
-    }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; }
+    .badge-code { background: #f3f4f6; color: #374151; }
+    .badge-dept { background: #fef3c7; color: #92400e; }
+    .btn-edit { padding: 4px 10px; background: #0891b2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; margin-right: 4px; }
+    .btn-del { padding: 4px 10px; background: #dc2626; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="app-layout">
     <div id="sidebar-mount"></div>
     <main class="main-content">
-
       <header>
         <h1>Manage Programs</h1>
-        <span id="countLabel" style="font-size:13px;color:#666;"></span>
+        <span id="countLabel" style="font-size:13px; color:#666;"></span>
       </header>
 
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Program</h2>
-
-        <form id="programForm" novalidate>
+            <p style="font-size:12px; color:#666; margin-top:-10px; margin-bottom:15px;">Note: Separate multiple tracks with commas (e.g., AI,CYBER,FRONT)</p>        <form id="programForm" novalidate>
           <div class="form-field">
             <input id="program_code" placeholder="Program code (e.g., 0105)" />
             <div class="field-msg" id="program_codeMsg"></div>
           </div>
-
           <div class="form-field">
             <input id="program_name" placeholder="Program name (e.g., Data Science)" />
             <div class="field-msg" id="program_nameMsg"></div>
           </div>
-
+          <div class="form-field">
+            <input id="tracks" placeholder="Tracks (e.g. AI,CYBER,FRONT,BACK)" />
+            <div class="field-msg" id="tracksMsg"></div>
+          </div>
           <div class="form-field">
             <select id="department_id">
               <option value="">-- Select department --</option>
             </select>
             <div class="field-msg" id="department_idMsg"></div>
           </div>
-
           <button type="submit" id="formSubmitBtn">Save Program</button>
         </form>
-
-        <p id="formMsg"></p>
+        <p id="formMsg" style="font-size:13px;"></p>
       </div>
 
       <div class="panel">
@@ -116,6 +69,7 @@
               <th>Code</th>
               <th>Name</th>
               <th>Department</th>
+              <th>Tracks</th>
               <th>Student Groups</th>
               <th id="actionCol">Actions</th>
             </tr>
@@ -123,42 +77,8 @@
           <tbody id="programTable"></tbody>
         </table>
       </div>
-
     </main>
   </div>
-
-  <!-- Global notice -->
-  <div id="pageNotice" style="
-    display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
-    padding:12px 20px; border-radius:8px; z-index:3000;
-    box-shadow:0 4px 12px rgba(0,0,0,0.15); font-size:14px;">
-  </div>
-
-  <!-- Confirm modal -->
-  <div id="confirmModal" style="
-    display:none; position:fixed; inset:0;
-    background:rgba(0,0,0,0.5); z-index:2500;
-    align-items:center; justify-content:center;">
-    <div style="
-      background:#fff; padding:24px; border-radius:12px;
-      width:380px; max-width:90%;">
-      <h3 id="confirmTitle" style="margin-top:0; font-size:16px;">Confirm</h3>
-      <p id="confirmText" style="font-size:13px;color:#555;margin:12px 0 20px;"></p>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button onclick="closeConfirm(false)"
-                style="padding:8px 16px; background:#6b7280; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
-          Cancel
-        </button>
-        <button id="confirmBtn" onclick="closeConfirm(true)"
-                style="padding:8px 16px; background:#dc2626; color:#fff;
-                       border:none; border-radius:6px; cursor:pointer; font-size:13px;">
-          Delete
-        </button>
-      </div>
-    </div>
-  </div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>

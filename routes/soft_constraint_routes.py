@@ -8,6 +8,7 @@ from db.database import get_db
 from db.models import SoftConstraint, User
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.time_slots import get_active_slots
 
 router = APIRouter(prefix="/soft-constraints", tags=["soft-constraints"])
 
@@ -26,12 +27,12 @@ DEFAULT_SOFT_CONSTRAINTS = {
     },
     "avoid_early_mornings": {
         "display_name": "Avoid Early Mornings",
-        "description": "Penalize 08:30 class slots.",
+        "description": "Penalize the first slot of the day.",
         "weight": 5,
     },
     "avoid_late_evenings": {
         "display_name": "Avoid Late Evenings",
-        "description": "Penalize 17:00 class slots.",
+        "description": "Penalize the last slot of the day.",
         "weight": 5,
     },
     "compact_days": {
@@ -40,15 +41,6 @@ DEFAULT_SOFT_CONSTRAINTS = {
         "weight": 5,
     },
 }
-
-ALL_SLOTS = [
-    "08:30-10:00",
-    "10:15-11:45",
-    "12:00-13:30",
-    "13:30-15:00",
-    "15:15-16:45",
-    "17:00-18:30",
-]
 
 
 class SoftConstraintUpdate(BaseModel):
@@ -67,7 +59,6 @@ class ScoreRequest(BaseModel):
     entries: list[ScoreEntry]
 
 
-# ---------- Helpers ----------
 def to_dict(c: SoftConstraint):
     return {
         "id": c.id,
@@ -97,49 +88,70 @@ def ensure_defaults(db: Session):
         db.commit()
 
 
-def penalty_minimize_gaps(entries):
-    """Penalize idle time between classes for the same group on the same day."""
+# ---------- Penalty functions (now take slots list) ----------
+
+def penalty_minimize_gaps(entries, slots):
+    if not entries or not slots:
+        return 0
     groups = {}
     for e in entries:
         key = (e.student_group, e.day)
         groups.setdefault(key, []).append(e.time_slot)
 
     total_gap = 0
-    for key, slots in groups.items():
-        if len(slots) < 2:
+    total_sessions = 0
+    for _, ss in groups.items():
+        total_sessions += len(ss)
+        if len(ss) < 2:
             continue
-        indices = sorted(ALL_SLOTS.index(s) for s in slots if s in ALL_SLOTS)
+        indices = sorted(slots.index(s) for s in ss if s in slots)
+        if len(indices) < 2:
+            continue
         span = indices[-1] - indices[0] + 1
-        gap = span - len(indices)
-        total_gap += gap
+        total_gap += (span - len(indices))
 
-    return min(total_gap * 15, 100)
-
-
-def penalty_avoid_early_mornings(entries):
-    count = sum(1 for e in entries if e.time_slot == "08:30-10:00")
-    return min(count * 20, 100)
+    if total_sessions == 0:
+        return 0
+    ratio = total_gap / total_sessions
+    return min(round(ratio * 150), 100)
 
 
-def penalty_avoid_late_evenings(entries):
-    count = sum(1 for e in entries if e.time_slot == "17:00-18:30")
-    return min(count * 20, 100)
+def penalty_avoid_early_mornings(entries, slots):
+    if not entries or not slots:
+        return 0
+    first = slots[0]
+    count = sum(1 for e in entries if e.time_slot == first)
+    ratio = count / len(entries)
+    return min(round(ratio * 200), 100)
 
 
-def penalty_compact_days(entries):
-    """More distinct days per group = more penalty."""
+def penalty_avoid_late_evenings(entries, slots):
+    if not entries or not slots:
+        return 0
+    last = slots[-1]
+    count = sum(1 for e in entries if e.time_slot == last)
+    ratio = count / len(entries)
+    return min(round(ratio * 200), 100)
+
+
+def penalty_compact_days(entries, slots):
+    if not entries:
+        return 0
     groups = {}
     for e in entries:
         key = e.student_group or "_"
         groups.setdefault(key, set()).add(e.day)
 
-    total_days = sum(len(days) for days in groups.values())
-    # Assume 5-day ideal spread, penalize above 3 distinct days per group
-    excess = sum(max(0, len(days) - 3) for days in groups.values())
-    return min(excess * 25, 100)
+    if not groups:
+        return 0
+    # Average distinct days per group; ideal is <= 3
+    avg_days = sum(len(d) for d in groups.values()) / len(groups)
+    excess = max(0, avg_days - 3)
+    return min(round(excess * 40), 100)
 
 
 # ---------- Routes ----------
+
 @router.get("")
 def list_soft_constraints(
     user: User = Depends(get_current_user),
@@ -160,12 +172,6 @@ def update_soft_constraint(
     if constraint_key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail="Unknown soft constraint key")
 
-    if data.weight < 0 or data.weight > 10:
-        raise HTTPException(
-            status_code=400,
-            detail="Weight must be an integer between 0 and 10",
-        )
-
     ensure_defaults(db)
     row = db.query(SoftConstraint).filter_by(constraint_key=constraint_key).first()
     if not row:
@@ -176,10 +182,8 @@ def update_soft_constraint(
     db.commit()
     db.refresh(row)
 
-    log_event(
-        db, admin.id, "soft_constraint_updated", True,
-        f"{constraint_key} weight={data.weight} enabled={data.is_enabled}",
-    )
+    log_event(db, admin.id, "soft_constraint_updated", True,
+              f"{constraint_key} weight={data.weight} enabled={data.is_enabled}")
     return to_dict(row)
 
 
@@ -205,12 +209,9 @@ def score_schedule(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Score a schedule against all active soft constraints.
-    Returns total score (0-100, higher is better) and per-constraint breakdown.
-    """
     ensure_defaults(db)
     rows = {c.constraint_key: c for c in db.query(SoftConstraint).all()}
+    slots = get_active_slots(db) or []
 
     entries = data.entries
     breakdown = []
@@ -228,8 +229,8 @@ def score_schedule(
         if not row or not row.is_enabled or row.weight == 0:
             continue
 
-        raw_penalty = fn(entries)               # 0-100
-        weighted = raw_penalty * row.weight / 10  # normalize weight to 0-1
+        raw_penalty = fn(entries, slots)
+        weighted = raw_penalty * row.weight / 10
         total_penalty += weighted
 
         breakdown.append({
@@ -240,9 +241,7 @@ def score_schedule(
             "weighted_penalty": round(weighted, 2),
         })
 
-    # Cap total penalty at 100
     final_score = max(0, round(100 - total_penalty, 2))
-
     return {
         "total_score": final_score,
         "total_penalty": round(total_penalty, 2),

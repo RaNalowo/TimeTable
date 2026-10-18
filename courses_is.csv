@@ -1,0 +1,44 @@
+﻿course_code,course_name,credits,semester_level,total_hours,lecture_hours,practice_hours,lab_hours,department,is_elective,track
+CSS 105,Fundamentals of Programming 1,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+INF 106,Information and Communication Technologies,5,Year 1 Fall,3,1,2,0,Engineering and Natural Sciences,0,
+MAT 156,Discrete Mathematics,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+MDE 160,Community engagement and value based Society 1,0,Year 1 Fall,1,0,1,0,Education and Humanities,0,
+MDE 171,History of Kazakhstan,5,Year 1 Fall,3,2,1,0,Education and Humanities,0,
+MDE 190,Foreign Language 1,5,Year 1 Fall,3,0,3,0,Education and Humanities,0,
+SDS 103,Linear algebra,5,Year 1 Fall,4,2,2,0,Engineering and Natural Sciences,0,
+CSS 331,Operating Systems,5,Year 1 Spring,3,2,1,0,Engineering and Natural Sciences,0,
+MAT 137,Mathematics for Information Systems 1,5,Year 1 Spring,4,2,0,2,Engineering and Natural Sciences,0,
+MDE 191,Foreign Language 2,5,Year 1 Spring,3,0,3,0,Education and Humanities,0,
+MDE 162,Law,5,Year 1 Spring,3,2,1,0,Education and Humanities,0,
+MAT 123,Linear Algebra,5,Year 1 Spring,4,2,2,0,Engineering and Natural Sciences,0,
+CSS 215,Introduction to Algorithms,5,Year 2 Fall,4,2,0,2,Engineering and Natural Sciences,0,
+CSS 217,Software Architecture and Design Patterns,5,Year 2 Fall,3,1,2,0,Engineering and Natural Sciences,0,
+MAT 138,Mathematics for Information Systems 2,5,Year 2 Fall,4,2,0,2,Engineering and Natural Sciences,0,
+MDE 166,Entrepreneurship,5,Year 2 Fall,3,2,1,0,Education and Humanities,0,
+MDE 289,Financial literacy,5,Year 2 Fall,3,2,1,0,Education and Humanities,0,
+INF 202,Database Management Systems 1,5,Year 2 Spring,3,1,2,0,Engineering and Natural Sciences,0,
+INF 313,Computer networks 1,5,Year 2 Spring,3,1,2,0,Engineering and Natural Sciences,0,
+MAT 251,Probability and Mathematical Statistics,5,Year 2 Spring,4,2,2,0,Engineering and Natural Sciences,0,
+INF 451,Project management information system,5,Year 3 Fall,3,1,2,0,Engineering and Natural Sciences,0,
+MDE 153,Module of Social and Political Knowledge (Cultural Studies),2,Year 3 Fall,1,1,0,0,Education and Humanities,0,
+MDE 154,Module of Social and Political Knowledge (Psychology),2,Year 3 Fall,1,1,0,0,Education and Humanities,0,
+MDE 161,Economy,5,Year 3 Fall,3,2,1,0,Education and Humanities,0,
+MDE 152,Module of Social and Political Knowledge (Sociology),2,Year 3 Spring,1,1,0,0,Education and Humanities,0,
+MDE 172,Philosophy,5,Year 3 Spring,3,2,1,0,Education and Humanities,0,
+CSS 410,Research tools and methods,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,0,
+INF 406,Data Ethics & Applied Analytics,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,0,
+INF 304,Data collection and analysis,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,AI
+INF 376,Natural Language Processing,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,AI
+INF 321,Machine Learning,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,1,AI
+INF 347,Fundamentals of Cyber Security,5,Year 4 Fall,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+INF 450,IT Infrastructure Security Administration,5,Year 4 Fall,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+INF 474,Security Data Analytics,5,Year 3 Spring,3,0,3,0,Engineering and Natural Sciences,1,CYBER
+INF 429,IT Audit and controls,5,Year 4 Fall,3,1,2,0,Engineering and Natural Sciences,1,CYBER
+INF 414,IT Governance Risk Compliance,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,1,CYBER
+INF 316,Web front,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,FRONT
+INF 228,UX/UI design,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,FRONT
+INF 345,Fundamentals of DevOps,5,Year 3 Fall,3,2,1,0,Engineering and Natural Sciences,1,BACK
+INF 422,Cloud Computing Essentials,5,Year 3 Fall,3,0,3,0,Engineering and Natural Sciences,1,BACK
+INF 391,Management in IT Ops,5,Year 4 Fall,3,3,0,0,Engineering and Natural Sciences,1,BACK
+INF 412,IT Asset Management,5,Year 4 Fall,3,0,3,0,Engineering and Natural Sciences,1,BACK
+INF 407,Business Analysis and System Development,5,Year 4 Fall,3,2,1,0,Engineering and Natural Sciences,1,BACK

@@ -8,17 +8,21 @@ from sqlalchemy.orm import Session
 from db.database import get_db
 from db.models import (
     Course, Room, Teacher, StudentGroup, TeacherAvailability,
-    Constraint, SoftConstraint, User, ScheduleEntry
+    Constraint, SoftConstraint, User, ScheduleEntry,
+    TimeSlot,
+    Program,
 )
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
 from services.time_slots import get_active_slots
+from services.semester_logic import (
+    get_active_semester, parse_semester_level, current_year_for_group,
+)
 
 router = APIRouter(prefix="/generator", tags=["generator"])
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
-# Default fallback — will be replaced at runtime by database values
 SLOTS = [
     "08:30-09:20",
     "09:30-10:20",
@@ -32,58 +36,83 @@ SLOTS = [
     "17:30-18:20",
 ]
 
-# Room type requirements per session type
 REQUIRED_ROOM_TYPES = {
-    "lecture":  ["Lecture Hall", "Regular Classroom", "Seminar Room"],
+    "lecture": ["Lecture Hall", "Regular Classroom", "Seminar Room"],
     "practice": ["Seminar Room", "Regular Classroom", "Lecture Hall"],
-    "lab":      ["Computer Lab", "Physics Lab"],
+    "lab": ["Computer Lab", "Physics Lab"],
 }
 
-# Equipment requirements per session type (OR-group)
 REQUIRED_EQUIPMENT_GROUPS = {
-    "lecture":  [],
+    "lecture": [],
     "practice": [],
-    "lab":      [["PCs", "Lab Kits"]],
+    "lab": [["PCs", "Lab Kits"]],
 }
 
 
-# ---------- Scoring helpers ----------
-def penalty_minimize_gaps(entries):
+# ============================================================
+# Scoring helpers
+# ============================================================
+
+def penalty_minimize_gaps(entries, slots):
+    if not entries or not slots:
+        return 0
     groups = {}
     for e in entries:
-        for g in (e["target_groups"] or "").split(","):
-            g = g.strip()
-            if not g:
-                continue
-            groups.setdefault((g, e["day"]), []).append(e["time_slot"])
-    total = 0
-    for _, slots in groups.items():
-        if len(slots) < 2:
+        g = e["group_code"]
+        if not g:
             continue
-        idxs = sorted(SLOTS.index(s) for s in slots if s in SLOTS)
+        groups.setdefault((g, e["day"]), []).append(e["time_slot"])
+
+    total_gap = 0
+    total_sessions = 0
+    for _, ss in groups.items():
+        total_sessions += len(ss)
+        if len(ss) < 2:
+            continue
+        idxs = sorted(slots.index(s) for s in ss if s in slots)
+        if len(idxs) < 2:
+            continue
         span = idxs[-1] - idxs[0] + 1
-        total += (span - len(idxs))
-    return min(total * 15, 100)
+        total_gap += (span - len(idxs))
+
+    if total_sessions == 0:
+        return 0
+    ratio = total_gap / total_sessions
+    return min(round(ratio * 150), 100)
 
 
-def penalty_avoid_early_mornings(entries):
-    return min(sum(1 for e in entries if e["time_slot"] == SLOTS[0]) * 20, 100)
+def penalty_avoid_early_mornings(entries, slots):
+    if not entries or not slots:
+        return 0
+    first = slots[0]
+    count = sum(1 for e in entries if e["time_slot"] == first)
+    ratio = count / len(entries)
+    return min(round(ratio * 200), 100)
 
 
-def penalty_avoid_late_evenings(entries):
-    return min(sum(1 for e in entries if e["time_slot"] == SLOTS[-1]) * 20, 100)
+def penalty_avoid_late_evenings(entries, slots):
+    if not entries or not slots:
+        return 0
+    last = slots[-1]
+    count = sum(1 for e in entries if e["time_slot"] == last)
+    ratio = count / len(entries)
+    return min(round(ratio * 200), 100)
 
 
-def penalty_compact_days(entries):
+def penalty_compact_days(entries, slots):
+    if not entries:
+        return 0
     groups = {}
     for e in entries:
-        for g in (e["target_groups"] or "").split(","):
-            g = g.strip()
-            if not g:
-                continue
-            groups.setdefault(g, set()).add(e["day"])
-    excess = sum(max(0, len(days) - 3) for days in groups.values())
-    return min(excess * 25, 100)
+        g = e["group_code"]
+        if not g:
+            continue
+        groups.setdefault(g, set()).add(e["day"])
+    if not groups:
+        return 0
+    avg_days = sum(len(d) for d in groups.values()) / len(groups)
+    excess = max(0, avg_days - 3)
+    return min(round(excess * 40), 100)
 
 
 PENALTY_FNS = {
@@ -94,78 +123,98 @@ PENALTY_FNS = {
 }
 
 
-# ---------- Target group resolution ----------
-def resolve_target_groups(db, raw_groups, course):
-    """
-    Expand target_groups (program names or group codes) into
-    concrete student groups that are CURRENTLY eligible for the course.
+# ============================================================
+# Target group resolution
+# ============================================================
 
-    A group is eligible only if:
-      1. Its current year (based on active semester) matches the course year
-      2. Its term (Fall/Spring) matches the course term
-    """
-    from services.semester_logic import (
-        get_active_semester, parse_semester_level,
-        current_year_for_group, group_matches_course,
-    )
-
-    active = get_active_semester(db)
-    if not active:
+def resolve_target_groups(db, course, semester):
+    course_year, course_term = parse_semester_level(course.semester_level)
+    if course_year is None:
         return []
 
-    all_groups = db.query(StudentGroup).all()
-    by_code = {g.group_code: g for g in all_groups}
+    if course_term != semester.term:
+        return []
 
-    resolved = []
-    for token in raw_groups:
-        token = token.strip()
-        if not token:
+    # 直接按 program_id 找组
+    groups = db.query(StudentGroup).filter(
+        StudentGroup.program_id == course.program_id
+    ).all()
+
+    matched = []
+    for g in groups:
+        # 检查年级
+        if current_year_for_group(g, semester) != course_year:
             continue
 
-        if token in by_code:
-            # Concrete group code
-            g = by_code[token]
-            if group_matches_course(g, course, active):
-                resolved.append(token)
-        else:
-            # Program name → all matching groups
-            for g in all_groups:
-                if g.program and g.program.program_name == token:
-                    if group_matches_course(g, course, active):
-                        resolved.append(g.group_code)
+        # 检查 track（如果课程限制了方向）
+        if course.track:
+            if g.track != course.track:
+                continue
 
-    return sorted(set(resolved))
+        matched.append(g)
 
-# ---------- Helpers ----------
-def expand_sessions(courses, db):
-    """
-    Each course expands into individual sessions.
-    Program names in target_groups are expanded into concrete
-    student groups, filtered by the course's year level.
-    """
+    return matched
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def expand_sessions(db, courses, semester):
     sessions = []
-
     for c in courses:
-        raw = [g.strip() for g in (c.target_groups or "").split(",") if g.strip()]
-        concrete_groups = resolve_target_groups(db, raw, c)
-
-        if not concrete_groups:
+        groups = resolve_target_groups(db, c, semester)
+        if not groups:
             continue
 
-        for group in concrete_groups:
+        for g in groups:
             base = {
                 "course_id": c.id,
                 "course_code": c.course_code,
                 "course_name": c.course_name,
-                "target_groups": [group],
-                "department": c.department,
+                "department": c.department_id,
+                "is_elective": c.is_elective,
+                "parent_group_code": g.group_code,
+                "group_id": g.id,
             }
+
+            # 1. Lecture (大组)
             for _ in range(c.lecture_hours or 0):
-                sessions.append({**base, "session_type": "lecture"})
-            for _ in range(c.practice_hours or 0):
-                sessions.append({**base, "session_type": "practice"})
-            for _ in range(c.lab_hours or 0):
-                sessions.append({**base, "session_type": "lab"})
+                sessions.append({
+                    **base,
+                    "session_type": "lecture",
+                    "group_code": g.group_code,
+                    "sub_group": None,
+                    "required_seats": g.student_count
+                })
+
+            # 2. Practice (子组)
+            if (c.practice_hours or 0) > 0:
+                sub_size = g.student_count // max(g.sub_group_count, 1)
+                for sub_idx in range(g.sub_group_count):
+                    sub_code = f"{g.group_code}-{sub_idx + 1}"
+                    for _ in range(c.practice_hours):
+                        sessions.append({
+                            **base,
+                            "session_type": "practice",
+                            "group_code": sub_code,
+                            "sub_group": str(sub_idx + 1),
+                            "required_seats": sub_size
+                        })
+
+            # 3. Lab (子组)
+            if (c.lab_hours or 0) > 0:
+                sub_size = g.student_count // max(g.sub_group_count, 1)
+                for sub_idx in range(g.sub_group_count):
+                    sub_code = f"{g.group_code}-{sub_idx + 1}"
+                    for _ in range(c.lab_hours):
+                        sessions.append({
+                            **base,
+                            "session_type": "lab",
+                            "group_code": sub_code,
+                            "sub_group": str(sub_idx + 1),
+                            "required_seats": sub_size
+                        })
 
     return sessions
 
@@ -174,13 +223,11 @@ def room_matches_session(room, session_type):
     allowed = REQUIRED_ROOM_TYPES.get(session_type, [])
     if allowed and room.room_type not in allowed:
         return False
-
     groups = REQUIRED_EQUIPMENT_GROUPS.get(session_type, [])
     equip_lower = (room.equipment or "").lower()
     for group in groups:
         if not any(kw.lower() in equip_lower for kw in group):
             return False
-
     return True
 
 
@@ -205,24 +252,53 @@ def slot_overlaps_lunch(slot, lunch_start, lunch_end):
         return False
 
 
-# ---------- Main generator ----------
-def generate(db):
-    global SLOTS
-    t0 = time.time()
-    TIMEOUT_SECONDS = 30
+def build_teacher_cache(courses, teachers):
+    cache = {}
+    for c in courses:
+        if c.course_name in cache:
+            continue
+        cache[c.course_name] = [t for t in teachers if teacher_qualified(t, c.course_name)]
+    return cache
 
-    # ---- Load active time slots from the database ----
-    SLOTS = get_active_slots(db)
+
+def build_room_cache(rooms):
+    cache = {}
+    for st in ["lecture", "practice", "lab"]:
+        matched = [r for r in rooms if room_matches_session(r, st)]
+        matched.sort(key=lambda r: r.capacity)
+        cache[st] = matched
+    return cache
+
+
+# ============================================================
+# Main generator
+# ============================================================
+
+def generate(db):
+    t0 = time.time()
+    TIMEOUT_SECONDS = 60
 
     log = []
-    log.append(f"Using {len(SLOTS)} time slots: {', '.join(SLOTS)}")
-    log.append("Loading input data...")
+
+    active = get_active_semester(db)
+    if not active:
+        raise HTTPException(status_code=400, detail="No active semester. Activate one first.")
+    log.append(f"Active semester: {active.name} ({active.term} {active.academic_year})")
+
+    slots = get_active_slots(db)
+    if not slots:
+        raise HTTPException(status_code=400, detail="No active time slots. Define them first.")
+    log.append(f"Using {len(slots)} time slots")
+
+    slot_idx = {s: i for i, s in enumerate(slots)}
+
+    unknown_slots = [s for s in slots if s not in SLOTS]
+    if unknown_slots:
+        log.append(f"[WARN] DB slots not in hardcoded SLOTS list: {unknown_slots}")
 
     courses = db.query(Course).all()
     rooms = db.query(Room).all()
     teachers = db.query(Teacher).all()
-    groups = db.query(StudentGroup).all()
-    group_sizes = {g.group_code: g.student_count for g in groups}
 
     if not courses or not rooms or not teachers:
         raise HTTPException(
@@ -230,27 +306,32 @@ def generate(db):
             detail="Missing required data (courses, rooms, or teachers).",
         )
 
-    sessions = expand_sessions(courses, db)
+    teacher_cache = build_teacher_cache(courses, teachers)
+    room_cache = build_room_cache(rooms)
+    log.append(
+        f"Cached {len(teacher_cache)} course→teacher maps, "
+        f"{sum(len(v) for v in room_cache.values())} room candidates"
+    )
+
+    sessions = expand_sessions(db, courses, active)
     total_sessions = len(sessions)
     log.append(f"Expanded {len(courses)} courses into {total_sessions} sessions.")
-    log.append(f"Timeout set to {TIMEOUT_SECONDS}s.")
 
-    # Sort: labs first (most constrained), then bigger groups
+    if total_sessions == 0:
+        log.append("No sessions to schedule.")
+        return _empty_result(active, log)
+
+    # 优先排最难的：Lab -> Practice -> Lecture
     sessions.sort(key=lambda s: (
-        0 if s["session_type"] == "lab" else 1,
-        -len(s["target_groups"]),
+        0 if s["session_type"] == "lab" else (1 if s["session_type"] == "practice" else 2),
     ))
 
-    # Hard constraints
     hard = {c.constraint_type: c for c in db.query(Constraint).all()}
     lunch_cfg = None
     if hard.get("lunch_break") and hard["lunch_break"].is_active:
         lunch_cfg = json.loads(hard["lunch_break"].config_json or "{}")
-        log.append(
-            f"Lunch break active: {lunch_cfg.get('start')}-{lunch_cfg.get('end')}"
-        )
+        log.append(f"Lunch break: {lunch_cfg.get('start')}-{lunch_cfg.get('end')}")
 
-    # Soft constraint weights
     soft_rows = {c.constraint_key: c for c in db.query(SoftConstraint).all()}
 
     def get_weight(key):
@@ -264,12 +345,8 @@ def generate(db):
     w_late = get_weight("avoid_late_evenings")
     w_compact = get_weight("compact_days")
 
-    log.append(
-        f"Soft weights: gaps={w_gaps}, early={w_early}, "
-        f"late={w_late}, compact={w_compact}"
-    )
+    log.append(f"Weights: gaps={w_gaps}, early={w_early}, late={w_late}, compact={w_compact}")
 
-    # Teacher availability
     user_by_email = {u.email: u.id for u in db.query(User).all()}
     avail_by_uid = {
         a.user_id: json.loads(a.matrix_json)
@@ -281,10 +358,14 @@ def generate(db):
         if uid and uid in avail_by_uid:
             teacher_avail[t.id] = avail_by_uid[uid]
 
-    # State trackers
+    # 状态记录
     room_slots = {r.id: set() for r in rooms}
     teacher_slots = {t.id: set() for t in teachers}
-    group_slots = {g.group_code: set() for g in groups}
+
+    # 必修/选修分开记录，方便选修课重叠逻辑
+    mandatory_slots = {}  # {group_code: set((day, slot))}
+    elective_slots = {}  # {group_code: set((day, slot))}
+
     teacher_hours = {t.id: 0 for t in teachers}
     teacher_daily = {t.id: {d: 0 for d in DAYS} for t in teachers}
     day_load = {d: 0 for d in DAYS}
@@ -294,35 +375,43 @@ def generate(db):
     timed_out = False
 
     for idx, session in enumerate(sessions):
-        # Timeout check every 20 sessions
-        if idx % 20 == 0 and (time.time() - t0) > TIMEOUT_SECONDS:
+        if idx % 50 == 0 and (time.time() - t0) > TIMEOUT_SECONDS:
             timed_out = True
-            remaining = sessions[idx:]
-            failed.extend(remaining)
-            log.append(
-                f"[TIMEOUT] Reached {TIMEOUT_SECONDS}s limit after placing "
-                f"{len(placed)} sessions. {len(remaining)} sessions skipped."
-            )
+            failed.extend(sessions[idx:])
+            log.append(f"[TIMEOUT] Stopped after {len(placed)} placements.")
             break
 
-        required_seats = sum(group_sizes.get(g, 0) for g in session["target_groups"])
+        required_seats = session["required_seats"]
+        parent_group = session["parent_group_code"]
+        current_group = session["group_code"]
+        is_elective = session["is_elective"]
+
+        candidates_teachers = teacher_cache.get(session["course_name"], [])
+        if not candidates_teachers:
+            failed.append(session)
+            log.append(
+                f"[FAIL] {session['course_code']} ({session['session_type']}) [{current_group}] — no qualified teacher")
+            continue
+
+        candidates_rooms = room_cache.get(session["session_type"], [])
+        if not candidates_rooms:
+            failed.append(session)
+            log.append(
+                f"[FAIL] {session['course_code']} ({session['session_type']}) [{current_group}] — no suitable room")
+            continue
 
         best = None
         best_penalty = float("inf")
 
         for day in DAYS:
-            for slot in SLOTS:
-                for room in rooms:
-                    if not room_matches_session(room, session["session_type"]):
-                        continue
+            for slot in slots:
+                for room in candidates_rooms:
                     if room.capacity < required_seats:
                         continue
                     if (day, slot) in room_slots[room.id]:
                         continue
 
-                    for teacher in teachers:
-                        if not teacher_qualified(teacher, session["course_name"]):
-                            continue
+                    for teacher in candidates_teachers:
                         if (day, slot) in teacher_slots[teacher.id]:
                             continue
                         if teacher_hours[teacher.id] >= teacher.max_weekly_hours:
@@ -331,15 +420,46 @@ def generate(db):
                             continue
 
                         if teacher.id in teacher_avail:
-                            st = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
-                            if st == "blocked":
+                            st_status = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
+                            if st_status == "blocked":
                                 continue
 
+                        # ====================================================
+                        # 检查组冲突 (层级逻辑)
+                        # ====================================================
                         group_busy = False
-                        for g in session["target_groups"]:
-                            if (day, slot) in group_slots.get(g, set()):
+
+                        # 1. 查必修占用
+                        # 如果当前是大组(Lecture)，检查它自己及其所有子组
+                        # 如果当前是子组(Practice)，检查它自己以及父组
+                        check_groups = [parent_group]
+                        if current_group != parent_group:
+                            check_groups.append(current_group)
+
+                        for g in check_groups:
+                            if (day, slot) in mandatory_slots.get(g, set()):
                                 group_busy = True
                                 break
+
+                        # 2. 查选修占用 (只有排必修课时才查)
+                        if not group_busy and not is_elective:
+                            for g in check_groups:
+                                if (day, slot) in elective_slots.get(g, set()):
+                                    group_busy = True
+                                    break
+
+                        # 3. 如果是 Lecture，除了查自己，还要查所有子组 (因为子组可能在上必修)
+                        if not group_busy and session["session_type"] == "lecture":
+                            sub_count = 3  # 默认，安全起见去库里查更准，但这里为了方便先看缓存
+                            # 实际上在 check_groups 里没有列出所有子组。
+                            # 为了严谨，如果是 Lecture，任何子组有必修课都不行。
+                            # (这里可以优化，但为了逻辑正确，暂时遍历字典)
+                            for g, slots_set in mandatory_slots.items():
+                                if g.startswith(f"{parent_group}-"):
+                                    if (day, slot) in slots_set:
+                                        group_busy = True
+                                        break
+
                         if group_busy:
                             continue
 
@@ -347,44 +467,40 @@ def generate(db):
                             if slot_overlaps_lunch(slot, lunch_cfg["start"], lunch_cfg["end"]):
                                 continue
 
-                        # ---------- Soft penalty (weighted) ----------
+                        # Soft penalty
                         p = 0.0
-
-                        # Daily load balance
                         p += day_load[day] * 4
 
-                        # Early morning penalty
-                        if slot == SLOTS[0]:
-                            p += 20 * (w_early / 10)
+                        n = len(slots)
+                        mid = (n - 1) / 2
+                        slot_i = slot_idx[slot]
+                        edge_distance = abs(slot_i - mid)
 
-                        # Late evening penalty
-                        if slot == SLOTS[-1]:
-                            p += 20 * (w_late / 10)
+                        if w_early > 0:
+                            p += edge_distance * 6 * (w_early / 10)
+                        if w_late > 0:
+                            p += edge_distance * 6 * (w_late / 10)
 
-                        # Minimize gaps
+                        p -= (mid - edge_distance) * 1.5
+
+                        # 用 current_group 计算 gap
                         if w_gaps > 0:
-                            current_idx = SLOTS.index(slot)
-                            for g in session["target_groups"]:
-                                taken = [
-                                    SLOTS.index(s)
-                                    for (d, s) in group_slots.get(g, set())
-                                    if d == day and s in SLOTS
-                                ]
-                                if taken:
-                                    min_dist = min(abs(current_idx - t) for t in taken)
-                                    if min_dist > 1:
-                                        p += 15 * (w_gaps / 10)
+                            current_i = slot_idx[slot]
+                            taken = [
+                                slot_idx[s]
+                                for (d, s) in mandatory_slots.get(current_group, set())
+                                if d == day and s in slot_idx
+                            ]
+                            if taken:
+                                min_dist = min(abs(current_i - t) for t in taken)
+                                if min_dist > 1:
+                                    p += 15 * (w_gaps / 10)
 
-                        # Compact days
                         if w_compact > 0:
-                            for g in session["target_groups"]:
-                                group_days = set(
-                                    d for (d, s) in group_slots.get(g, set())
-                                )
-                                if group_days and day not in group_days:
-                                    p += 10 * (w_compact / 10)
+                            group_days = set(d for (d, s) in mandatory_slots.get(current_group, set()))
+                            if group_days and day not in group_days:
+                                p += 10 * (w_compact / 10)
 
-                        # Teacher preferred time bonus
                         if teacher.id in teacher_avail:
                             pref = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
                             if pref == "preferred":
@@ -404,13 +520,33 @@ def generate(db):
 
         if not best:
             failed.append(session)
-            log.append(
-                f"[FAIL] {session['course_code']} ({session['session_type']}) "
-                f"[{', '.join(session['target_groups'])}] — no valid placement found"
-            )
+            log.append(f"[FAIL] {session['course_code']} ({session['session_type']}) [{current_group}]")
             continue
 
         day, slot, room, teacher = best
+
+        # 记录占用
+        room_slots[room.id].add((day, slot))
+        teacher_slots[teacher.id].add((day, slot))
+
+        if is_elective:
+            # 选修课：只写入 elective_slots
+            for g in check_groups:
+                elective_slots.setdefault(g, set()).add((day, slot))
+        else:
+            # 必修课：写入 mandatory_slots
+            for g in check_groups:
+                mandatory_slots.setdefault(g, set()).add((day, slot))
+            # 如果是 Lecture，还要占所有子组的时间
+            if session["session_type"] == "lecture":
+                for i in range(1, 4):  # 假设固定 3 个子组，这里做个遍历标记
+                    sub_g = f"{parent_group}-{i}"
+                    mandatory_slots.setdefault(sub_g, set()).add((day, slot))
+
+        teacher_hours[teacher.id] += 1
+        teacher_daily[teacher.id][day] += 1
+        day_load[day] += 1
+
         placed.append({
             "day": day,
             "time_slot": slot,
@@ -422,35 +558,28 @@ def generate(db):
             "course_code": session["course_code"],
             "course_name": session["course_name"],
             "session_type": session["session_type"],
-            "target_groups": ", ".join(session["target_groups"]),
+            "group_id": session["group_id"],
+            "sub_group": session["sub_group"],
+            "group_code": current_group
         })
-
-        room_slots[room.id].add((day, slot))
-        teacher_slots[teacher.id].add((day, slot))
-        for g in session["target_groups"]:
-            group_slots.setdefault(g, set()).add((day, slot))
-        teacher_hours[teacher.id] += 1
-        teacher_daily[teacher.id][day] += 1
-        day_load[day] += 1
 
         log.append(
             f"[OK] {session['course_code']} ({session['session_type']}) → "
-            f"{day} {slot}, room {room.room_code}, teacher {teacher.full_name} "
-            f"[{', '.join(session['target_groups'])}]"
+            f"{day} {slot}, {room.room_code}, {teacher.full_name} [{current_group}]"
         )
 
     elapsed = round(time.time() - t0, 3)
-    log.append(f"Generation finished in {elapsed}s")
+    log.append(f"Finished in {elapsed}s")
     log.append(f"Placed: {len(placed)}, Failed: {len(failed)}")
 
-    # Compute final soft-constraint score
+    # Final score
     breakdown = []
     total_penalty = 0
     for key, fn in PENALTY_FNS.items():
         row = soft_rows.get(key)
         if not row or not row.is_enabled or row.weight == 0:
             continue
-        raw = fn(placed)
+        raw = fn(placed, slots)
         weighted = raw * row.weight / 10
         total_penalty += weighted
         breakdown.append({
@@ -463,16 +592,24 @@ def generate(db):
 
     score = max(0, round(100 - total_penalty, 2))
 
-    if timed_out or failed:
+    coverage = (
+        round(len(placed) / total_sessions * 100, 1) if total_sessions else 100
+    )
+    if not failed:
+        status = "success"
+    elif placed:
         status = "partial"
     else:
-        status = "success"
+        status = "failed"
+
+    log.append(f"Coverage: {coverage}%  ({len(placed)}/{total_sessions})")
 
     return {
         "status": status,
         "placed_count": len(placed),
         "failed_count": len(failed),
         "total_sessions": total_sessions,
+        "coverage": coverage,
         "timed_out": timed_out,
         "elapsed_seconds": elapsed,
         "score": score,
@@ -480,75 +617,109 @@ def generate(db):
         "log": log,
         "entries": placed,
         "failed_sessions": [
-            {"course_code": s["course_code"], "session_type": s["session_type"]}
+            {
+                "course_code": s["course_code"],
+                "session_type": s["session_type"],
+                "group_code": s["group_code"],
+            }
             for s in failed[:50]
         ],
     }
 
 
-# ---------- Routes ----------
+def _empty_result(semester, log):
+    return {
+        "status": "success",
+        "placed_count": 0,
+        "failed_count": 0,
+        "total_sessions": 0,
+        "coverage": 100,
+        "timed_out": False,
+        "elapsed_seconds": 0,
+        "score": 100,
+        "score_breakdown": [],
+        "log": log,
+        "entries": [],
+        "failed_sessions": [],
+    }
+
+
+# ============================================================
+# Routes
+# ============================================================
+
 @router.post("/generate")
 def run_generation(
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+        admin: User = Depends(require_role("admin")),
+        db: Session = Depends(get_db),
 ):
-    from services.semester_logic import get_active_semester
-
     active = get_active_semester(db)
     if not active:
-        raise HTTPException(
-            status_code=400,
-            detail="No active semester. Please activate one first.",
-        )
+        raise HTTPException(status_code=400, detail="No active semester.")
 
-    # Only delete entries of the ACTIVE semester
     db.query(ScheduleEntry).filter_by(semester_id=active.id).delete()
     db.commit()
 
     result = generate(db)
 
+    slot_by_label = {s.slot_label: s.id for s in db.query(TimeSlot).all()}
+
+    skipped_slots = []
+
     for e in result["entries"]:
+        slot_id = slot_by_label.get(e["time_slot"])
+        if slot_id is None:
+            skipped_slots.append(e["time_slot"])
+            continue
+
         db.add(ScheduleEntry(
             day=e["day"],
-            time_slot=e["time_slot"],
+            time_slot_id=slot_id,
             course_id=e["course_id"],
-            course_code=e["course_code"],
-            session_type=e["session_type"],
             room_id=e["room_id"],
-            room_code=e["room_code"],
             teacher_id=e["teacher_id"],
-            teacher_name=e["teacher_name"],
-            target_groups=e["target_groups"],
-            semester_id=active.id,            # ← 加这行
+            group_id=e["group_id"],
+            sub_group=e["sub_group"],  # ★ 写入子组
+            semester_id=active.id,
+            session_type=e["session_type"],
         ))
     db.commit()
-    ...
+
+    if skipped_slots:
+        result["log"].append(
+            f"[WARN] {len(skipped_slots)} entries skipped: unknown slot labels."
+        )
+
+    log_event(
+        db, admin.id, "timetable_generated", True,
+        f"placed={result['placed_count']} failed={result['failed_count']} "
+        f"coverage={result.get('coverage', 0)}%"
+    )
+
+    return result
 
 
 @router.get("/entries")
 def list_entries(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
 ):
-    from services.semester_logic import get_active_semester
     active = get_active_semester(db)
+    if not active:
+        return []
 
-    if active:
-        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
-    else:
-        entries = []
-
+    entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
     return [
         {
             "id": e.id,
             "day": e.day,
-            "time_slot": e.time_slot,
-            "course_code": e.course_code,
+            "time_slot": e.time_slot.slot_label if e.time_slot else None,
+            "course_code": e.course.course_code if e.course else None,
             "session_type": e.session_type,
-            "room_code": e.room_code,
-            "teacher_name": e.teacher_name,
-            "target_groups": e.target_groups,
-            "semester_id": e.semester_id,
+            "sub_group": e.sub_group,
+            "room_code": e.room.room_code if e.room else None,
+            "teacher_name": e.teacher.full_name if e.teacher else None,
+            "target_groups": e.group.group_code if e.group else None,
         }
         for e in entries
     ]

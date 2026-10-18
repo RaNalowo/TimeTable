@@ -14,9 +14,10 @@ router = APIRouter(prefix="/student-groups", tags=["student-groups"])
 class StudentGroupRequest(BaseModel):
     group_code: str = Field(min_length=1)
     program: str | None = None
-    enrollment_year: int | None = Field(default=None, ge=2000, le=2100)
-    year_override: int | None = Field(default=None, ge=1, le=10)
-    student_count: int = Field(default=0, ge=0, le=500)
+    enrollment_year: int | None = None
+    year_override: int | None = None
+    student_count: int = 0
+    track: str | None = None  # ★ 新增
 
 
 def group_to_dict(g: StudentGroup, db: Session):
@@ -44,35 +45,18 @@ def group_to_dict(g: StudentGroup, db: Session):
         "year_override": g.year_override,
         "current_year": current_year,
         "student_count": g.student_count,
+        "track": g.track,  # ★ 新增
     }
 
 
 @router.get("")
-def list_groups(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    groups = db.query(StudentGroup).order_by(
-        StudentGroup.enrollment_year.asc(),
-        StudentGroup.group_code.asc(),
-    ).all()
+def list_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    groups = db.query(StudentGroup).order_by(StudentGroup.enrollment_year.asc(), StudentGroup.group_code.asc()).all()
     return [group_to_dict(g, db) for g in groups]
 
 
-@router.get("/programs")
-def list_programs(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    programs = db.query(Program).order_by(Program.program_name).all()
-    return [{"id": p.id, "name": p.program_name, "code": p.program_code} for p in programs]
-
-
 @router.get("/departments")
-def list_departments_with_programs(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def list_departments_with_programs(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     departments = db.query(Department).order_by(Department.name).all()
     result = []
     for d in departments:
@@ -86,11 +70,7 @@ def list_departments_with_programs(
 
 
 @router.post("")
-def create_group(
-    data: StudentGroupRequest,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
-):
+def create_group(data: StudentGroupRequest, admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     if db.query(StudentGroup).filter_by(group_code=data.group_code).first():
         raise HTTPException(status_code=400, detail="Group code already exists")
 
@@ -107,6 +87,7 @@ def create_group(
         enrollment_year=data.enrollment_year,
         year_override=data.year_override,
         student_count=data.student_count,
+        track=data.track,  # ★ 新增
     )
     db.add(g)
     db.commit()
@@ -116,20 +97,12 @@ def create_group(
 
 
 @router.put("/{group_id}")
-def update_group(
-    group_id: int,
-    data: StudentGroupRequest,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
-):
+def update_group(group_id: int, data: StudentGroupRequest, admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     g = db.query(StudentGroup).filter_by(id=group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    dup = db.query(StudentGroup).filter(
-        StudentGroup.group_code == data.group_code,
-        StudentGroup.id != group_id,
-    ).first()
+    dup = db.query(StudentGroup).filter(StudentGroup.group_code == data.group_code, StudentGroup.id != group_id).first()
     if dup:
         raise HTTPException(status_code=400, detail="Group code already exists")
 
@@ -145,6 +118,7 @@ def update_group(
     g.enrollment_year = data.enrollment_year
     g.year_override = data.year_override
     g.student_count = data.student_count
+    g.track = data.track  # ★ 新增
     db.commit()
     db.refresh(g)
 
@@ -153,11 +127,7 @@ def update_group(
 
 
 @router.delete("/{group_id}")
-def delete_group(
-    group_id: int,
-    admin: User = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
-):
+def delete_group(group_id: int, admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     g = db.query(StudentGroup).filter_by(id=group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Group not found")
