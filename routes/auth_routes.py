@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from config import MAX_FAILED, LOCK_MINUTES
@@ -17,17 +18,24 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ---------- Schemas ----------
 class LoginRequest(BaseModel):
-    identifier: str
-    password: str
+    identifier: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class CreateUserRequest(BaseModel):
     email: str
     full_name: str
-    password: str
+    password: str = Field(min_length=6)
     role: str            # student | teacher | admin
     student_id: str | None = None
     employee_id: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def password_size(cls, value):
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 UTF-8 bytes")
+        return value
 
 
 # ---------- Helpers ----------
@@ -42,14 +50,17 @@ def find_user(db: Session, identifier: str):
 def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.split(" ")[1]
+    token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = decode_token(token)
-    except Exception:
+        user_id = int(payload["sub"])
+    except (InvalidTokenError, ValueError, TypeError, KeyError):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    user = db.query(User).filter_by(id=int(payload["sub"])).first()
+    user = db.query(User).filter_by(id=user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Account is not active")
     return user
 
 

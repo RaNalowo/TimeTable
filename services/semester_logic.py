@@ -12,7 +12,7 @@ def parse_semester_level(level: str):
     """'Year 3 Fall' -> (3, 'Fall'). Returns (None, None) if unparseable."""
     if not level:
         return None, None
-    m = re.match(r"Year\s*(\d)\s*(Fall|Spring)", level)
+    m = re.fullmatch(r"Year\s*([1-9])\s*,?\s*(Fall|Spring)", level.strip())
     if not m:
         return None, None
     return int(m.group(1)), m.group(2)

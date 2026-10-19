@@ -1,13 +1,15 @@
 import re
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db.database import get_db
 from db.models import (
     Course, Teacher, Room, StudentGroup, Program,
-    TimeSlot, Semester, User,
+    TimeSlot, Semester, User, TeacherAvailability, Constraint,
 )
 from routes.auth_routes import get_current_user
+from services.scheduling_data import read_availability, read_lunch
+from services.semester_logic import parse_semester_level
 
 router = APIRouter(prefix="/validation", tags=["validation"])
 
@@ -93,6 +95,9 @@ def check_courses(db: Session):
                 })
 
         # --- Hours sum ---
+        if parse_semester_level(c.semester_level)[0] is None:
+            issues.append({"severity": "error", "category": "courses",
+                           "message": f"Course {c.course_code} needs semester level 'Year N Fall' or 'Year N Spring'."})
         total = (c.lecture_hours or 0) + (c.practice_hours or 0) + (c.lab_hours or 0)
         if total != (c.total_hours or 0):
             issues.append({
@@ -100,6 +105,8 @@ def check_courses(db: Session):
                 "category": "courses",
                 "message": f"Course {c.course_code}: hours sum {total} ≠ total {c.total_hours}.",
             })
+        if total <= 0 or any((h or 0) < 0 for h in (c.lecture_hours, c.practice_hours, c.lab_hours)):
+            issues.append({"severity": "error", "category": "courses", "message": f"Course {c.course_code} has invalid hours."})
 
         # --- Qualified teacher ---
         name = (c.course_name or "").lower()
@@ -140,7 +147,7 @@ def check_teachers(db: Session):
     teachers = db.query(Teacher).all()
 
     for t in teachers:
-        if not t.max_weekly_hours or t.max_weekly_hours < 1:
+        if not t.max_weekly_hours or t.max_weekly_hours < 1 or not t.max_daily_hours or t.max_daily_hours < 1:
             issues.append({
                 "severity": "error",
                 "category": "teachers",
@@ -196,7 +203,7 @@ def check_student_groups(db: Session):
                 "category": "student_groups",
                 "message": f"Group {g.group_code} has invalid student count.",
             })
-        if not g.sub_group_count or g.sub_group_count < 1:
+        if not g.sub_group_count or g.sub_group_count < 1 or g.sub_group_count > (g.student_count or 0):
             issues.append({
                 "severity": "error",
                 "category": "student_groups",
@@ -215,12 +222,63 @@ def get_report(
     Full pre-flight validation report.
     Called BEFORE the AI generator runs.
     """
+    return build_report(db)
+
+
+def check_configuration(db):
+    from routes.time_slot_routes import parse_slot
+    issues = []
+    if db.query(Semester).filter_by(is_active=True).count() > 1:
+        issues.append({"severity": "error", "category": "semester", "message": "More than one semester is active."})
+    slots = db.query(TimeSlot).filter_by(is_active=True).order_by(TimeSlot.sort_order).all()
+    previous_end = None
+    orders = set()
+    for slot in slots:
+        parsed = parse_slot(slot.slot_label)
+        if (not parsed or parsed[1] - parsed[0] != 50 or
+            (previous_end is not None and parsed[0] < previous_end) or
+            slot.sort_order in orders or not 1 <= slot.sort_order <= 10):
+            issues.append({"severity": "error", "category": "time_slots", "message": f"Invalid, overlapping or unordered slot: {slot.slot_label}."})
+        if parsed:
+            previous_end = parsed[1]
+        orders.add(slot.sort_order)
+    for row in db.query(TeacherAvailability).all():
+        try:
+            matrix = read_availability(row.matrix_json)
+            if any(key not in {s.slot_label for s in slots} for values in matrix.values() for key in values):
+                issues.append({"severity": "warning", "category": "availability", "message": f"Availability for user {row.user_id} contains outdated slots; re-save it."})
+        except HTTPException as exc:
+            issues.append({"severity": "error", "category": "availability", "message": f"User {row.user_id}: {exc.detail}"})
+    submitted = {r.user_id for r in db.query(TeacherAvailability).all()}
+    missing_availability = []
+    for teacher in db.query(Teacher).all():
+        user = db.query(User).filter_by(email=teacher.email).first()
+        uid = teacher.user_id or (user.id if user else None)
+        if not uid or uid not in submitted:
+            missing_availability.append(teacher.full_name)
+    if missing_availability:
+        issues.append({"severity": "warning", "category": "availability",
+                       "message": f"{len(missing_availability)} teacher(s) have no submitted availability; unspecified periods are treated as neutral. Examples: {', '.join(missing_availability[:3])}."})
+    lunch = db.query(Constraint).filter_by(constraint_type="lunch_break", is_active=True).first()
+    for row in db.query(Constraint).filter(Constraint.constraint_type.in_(["no_overlap_rooms", "no_overlap_teachers"])).all():
+        if not row.is_active:
+            issues.append({"severity": "error", "category": "constraints", "message": f"Enable mandatory rule {row.constraint_type} in Hard Constraints."})
+    if lunch:
+        try:
+            read_lunch(lunch.config_json)
+        except HTTPException as exc:
+            issues.append({"severity": "error", "category": "constraints", "message": exc.detail})
+    return issues
+
+
+def build_report(db):
     all_issues = []
     all_issues.extend(check_basics(db))
     all_issues.extend(check_courses(db))
     all_issues.extend(check_teachers(db))
     all_issues.extend(check_rooms(db))
     all_issues.extend(check_student_groups(db))
+    all_issues.extend(check_configuration(db))
 
     errors = [i for i in all_issues if i["severity"] == "error"]
     warnings = [i for i in all_issues if i["severity"] == "warning"]

@@ -15,16 +15,6 @@ DEFAULT_SLOTS = [
 
 
 def get_active_slots(db):
-    """Read active time slots from the database, fallback to defaults."""
-    try:
-        rows = (
-            db.query(TimeSlot)
-            .filter_by(is_active=True)
-            .order_by(TimeSlot.sort_order)
-            .all()
-        )
-        if rows:
-            return [r.slot_label for r in rows]
-    except Exception:
-        pass
-    return DEFAULT_SLOTS
+    """Return only configured active slots; never invent schedulable periods."""
+    rows = db.query(TimeSlot).filter_by(is_active=True).order_by(TimeSlot.sort_order).all()
+    return [r.slot_label for r in rows]

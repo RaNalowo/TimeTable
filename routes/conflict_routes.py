@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import json
+import math
+from typing import Literal
 
 from db.database import get_db
 from db.models import (
@@ -10,6 +12,8 @@ from db.models import (
 )
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.scheduling_data import read_availability, read_lunch
+from db.models import Semester, Constraint
 from services.time_slots import get_active_slots
 from services.semester_logic import get_active_semester
 
@@ -64,7 +68,7 @@ def _required_seats(e):
         return 0
     if e.sub_group:
         # 子组人数 = 大组总人数 / 子组数量
-        return e.group.student_count // max(e.group.sub_group_count, 1)
+        return math.ceil(e.group.student_count / max(e.group.sub_group_count, 1))
     return e.group.student_count
 
 
@@ -82,13 +86,10 @@ def scan_conflicts(db):
     user_by_email = {u.email: u.id for u in db.query(User).all()}
     avail_by_uid = {}
     for a in db.query(TeacherAvailability).all():
-        try:
-            avail_by_uid[a.user_id] = json.loads(a.matrix_json)
-        except Exception:
-            pass
+        avail_by_uid[a.user_id] = read_availability(a.matrix_json)
     teacher_avail = {}
     for t in teachers.values():
-        uid = user_by_email.get(t.email)
+        uid = t.user_id or user_by_email.get(t.email)
         if uid and uid in avail_by_uid:
             teacher_avail[t.id] = avail_by_uid[uid]
 
@@ -106,35 +107,33 @@ def scan_conflicts(db):
             "details": details,
         })
 
-    # 1. Room double-booking
-    seen = {}
-    for e in entries:
-        if not e.room_id:
-            continue
-        key = (e.room_id, e.day, e.time_slot_id)
-        if key in seen:
-            other = seen[key]
-            add([e.id, other.id], "room_double_booking", "error",
-                f"Room {_room_code(e)} double-booked on {e.day} {_slot_label(e)}",
-                {"room": _room_code(e), "day": e.day, "time_slot": _slot_label(e),
-                 "courses": [_course_code(other), _course_code(e)]})
-        else:
-            seen[key] = e
+    # Compare actual intervals, including distinct slot IDs with overlapping times.
+    from routes.time_slot_routes import parse_slot
 
-    # 2. Teacher double-booking
-    seen = {}
-    for e in entries:
-        if not e.teacher_id:
-            continue
-        key = (e.teacher_id, e.day, e.time_slot_id)
-        if key in seen:
-            other = seen[key]
-            add([e.id, other.id], "teacher_double_booking", "error",
-                f"Teacher {_teacher_name(e)} double-booked on {e.day} {_slot_label(e)}",
-                {"teacher": _teacher_name(e), "day": e.day, "time_slot": _slot_label(e),
-                 "courses": [_course_code(other), _course_code(e)]})
-        else:
-            seen[key] = e
+    def overlaps(left, right):
+        if left.time_slot_id == right.time_slot_id and left.time_slot_id is not None:
+            return True
+        a = parse_slot(_slot_label(left) or "")
+        b = parse_slot(_slot_label(right) or "")
+        return bool(a and b and a[0] < b[1] and b[0] < a[1])
+
+    for field, type_, label_fn in [
+        ("room_id", "room_double_booking", _room_code),
+        ("teacher_id", "teacher_double_booking", _teacher_name),
+    ]:
+        seen = {}
+        for e in entries:
+            identifier = getattr(e, field)
+            if not identifier:
+                continue
+            key = (identifier, e.day)
+            for other in seen.get(key, []):
+                if overlaps(other, e):
+                    add([e.id, other.id], type_, "error",
+                        f"{label_fn(e)} double-booked on {e.day} {_slot_label(e)}",
+                        {"day": e.day, "time_slot": _slot_label(e),
+                         "courses": [_course_code(other), _course_code(e)]})
+            seen.setdefault(key, []).append(e)
 
     # 3. Student group double-booking (层级检测)
     # 按 (group_id, day, slot) 分组，可能会有 Lecture 和 多个 Practice
@@ -142,10 +141,10 @@ def scan_conflicts(db):
     for e in entries:
         if not e.group_id:
             continue
-        key = (e.group_id, e.day, e.time_slot_id)
+        key = (e.group_id, e.day)
         group_time_map.setdefault(key, []).append(e)
 
-    for (_, day, _), elist in group_time_map.items():
+    for (_, day), elist in group_time_map.items():
         if len(elist) <= 1:
             continue
 
@@ -153,6 +152,8 @@ def scan_conflicts(db):
         for i in range(len(elist)):
             for j in range(i + 1, len(elist)):
                 e1, e2 = elist[i], elist[j]
+                if not overlaps(e1, e2):
+                    continue
 
                 sub1 = e1.sub_group
                 sub2 = e2.sub_group
@@ -186,7 +187,7 @@ def scan_conflicts(db):
             continue
         total = _required_seats(e)
         if total > room.capacity:
-            add([e.id], "capacity_overflow", "warning",
+            add([e.id], "capacity_overflow", "error",
                 f"Room {room.room_code} capacity {room.capacity} < required {total}",
                 {"room": room.room_code, "capacity": room.capacity,
                  "required": total, "excess": total - room.capacity,
@@ -201,7 +202,7 @@ def scan_conflicts(db):
             continue
         allowed = REQUIRED_ROOM_TYPES.get(e.session_type, [])
         if allowed and room.room_type not in allowed:
-            add([e.id], "wrong_room_type", "warning",
+            add([e.id], "wrong_room_type", "error",
                 f"{_course_code(e)} ({e.session_type}) in {room.room_type} '{room.room_code}'",
                 {"room": room.room_code, "room_type": room.room_type,
                  "session_type": e.session_type, "course": _course_code(e)})
@@ -222,7 +223,7 @@ def scan_conflicts(db):
             if not any(kw.lower() in equip_lower for kw in group):
                 missing_groups.append(" / ".join(group))
         if missing_groups:
-            add([e.id], "gear_mismatch", "warning",
+            add([e.id], "gear_mismatch", "error",
                 f"Room {room.room_code} missing: {'; '.join(missing_groups)}",
                 {"room": room.room_code, "missing": missing_groups,
                  "course": _course_code(e)})
@@ -267,9 +268,29 @@ def scan_conflicts(db):
         subjects = [s.strip().lower() for s in t.qualified_subjects.split(",")]
         cname = (e.course.course_name or "").lower()
         if not any(s in cname or cname in s for s in subjects):
-            add([e.id], "teacher_unqualified", "warning",
+            add([e.id], "teacher_unqualified", "error",
                 f"Teacher {t.full_name} may not be qualified for {_course_code(e)}",
                 {"teacher": t.full_name, "course": _course_code(e)})
+
+    daily = {}
+    for e in entries:
+        if e.teacher_id:
+            daily.setdefault((e.teacher_id, e.day), []).append(e)
+        if (e.day not in DAYS or not e.time_slot or not e.time_slot.is_active or
+            not e.course or not e.teacher or not e.room or not e.group):
+            add([e.id], "invalid_entry", "error", "Session has missing resources or an invalid day/time slot.", {})
+    for (teacher_id, day), items in daily.items():
+        teacher = teachers.get(teacher_id)
+        if teacher and len(items) > teacher.max_daily_hours:
+            add([e.id for e in items], "teacher_daily_overload", "error",
+                f"Teacher {teacher.full_name} exceeds daily teaching limit on {day}", {})
+    lunch = db.query(Constraint).filter_by(constraint_type="lunch_break", is_active=True).first()
+    if lunch:
+        from routes.constraint_routes import slot_overlaps_lunch
+        cfg = read_lunch(lunch.config_json)
+        for e in entries:
+            if e.day in cfg["days"] and e.time_slot and slot_overlaps_lunch(e.time_slot.slot_label, cfg["start"], cfg["end"]):
+                add([e.id], "lunch_break", "error", f"{_course_code(e)} overlaps the lunch break on {e.day}", {})
 
     return {
         "conflicts": conflicts,
@@ -344,7 +365,7 @@ def grid(
 
 
 class MoveRequest(BaseModel):
-    day: str
+    day: Literal["Mon", "Tue", "Wed", "Thu", "Fri"]
     time_slot: str
     room_id: int | None = None
 
@@ -385,10 +406,10 @@ def move_entry(
 
 
 class CreateEntryRequest(BaseModel):
-    day: str
+    day: Literal["Mon", "Tue", "Wed", "Thu", "Fri"]
     time_slot: str
     course_id: int
-    session_type: str
+    session_type: Literal["lecture", "practice", "lab"]
     room_id: int
     teacher_id: int | None = None
     group_id: int | None = None
@@ -402,9 +423,26 @@ def create_entry(
         admin: User = Depends(require_role("admin")),
         db: Session = Depends(get_db),
 ):
-    slot = db.query(TimeSlot).filter_by(slot_label=data.time_slot).first()
+    active = get_active_semester(db)
+    if not active:
+        raise HTTPException(status_code=400, detail="No active semester")
+    if data.semester_id is not None and data.semester_id != active.id:
+        raise HTTPException(status_code=400, detail="Entries must belong to the active semester")
+    slot = db.query(TimeSlot).filter_by(slot_label=data.time_slot, is_active=True).first()
     if not slot:
-        raise HTTPException(status_code=400, detail="Time slot not found")
+        raise HTTPException(status_code=400, detail="Active time slot not found")
+    for model, identifier, label in [(Course, data.course_id, "Course"),
+                                     (Room, data.room_id, "Room"),
+                                     (Teacher, data.teacher_id, "Teacher"),
+                                     (StudentGroup, data.group_id, "Student group")]:
+        if identifier is None or db.get(model, identifier) is None:
+            raise HTTPException(status_code=400, detail=f"{label} not found")
+    group = db.get(StudentGroup, data.group_id)
+    if data.session_type == "lecture" and data.sub_group is not None:
+        raise HTTPException(status_code=400, detail="Lectures must use the full group")
+    if data.session_type != "lecture":
+        if not data.sub_group or not data.sub_group.isdigit() or not 1 <= int(data.sub_group) <= group.sub_group_count:
+            raise HTTPException(status_code=400, detail="Practice/lab needs a valid subgroup number")
 
     entry = ScheduleEntry(
         day=data.day,
@@ -415,7 +453,7 @@ def create_entry(
         teacher_id=data.teacher_id,
         group_id=data.group_id,
         sub_group=data.sub_group,  # ★ 写入
-        semester_id=data.semester_id,
+        semester_id=active.id,
     )
     db.add(entry)
     db.commit()
@@ -456,6 +494,9 @@ def swap_entries(
     b = db.query(ScheduleEntry).filter_by(id=data.entry_id_b).first()
     if not a or not b:
         raise HTTPException(status_code=404, detail="One or both entries not found")
+
+    if a.semester_id != b.semester_id:
+        raise HTTPException(status_code=400, detail="Cannot swap sessions from different semesters")
 
     a.day, b.day = b.day, a.day
     a.time_slot_id, b.time_slot_id = b.time_slot_id, a.time_slot_id

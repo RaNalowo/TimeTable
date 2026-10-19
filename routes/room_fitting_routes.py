@@ -1,3 +1,5 @@
+import math
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -37,11 +39,13 @@ def _required_seats(db: Session, target_groups: list[str], session_type: str) ->
     - Practice/Lab: use sub-group size (student_count / sub_group_count)
     """
     groups = db.query(StudentGroup).filter(StudentGroup.group_code.in_(target_groups)).all()
+    if not target_groups or {g.group_code for g in groups} != set(target_groups):
+        raise HTTPException(status_code=400, detail="Select existing student groups")
     total = 0
     for g in groups:
         if session_type in ("practice", "lab"):
             sub_count = max(g.sub_group_count, 1)
-            total += g.student_count // sub_count
+            total += math.ceil(g.student_count / sub_count)
         else:
             total += g.student_count
     return total
@@ -52,8 +56,9 @@ def _room_has_equipment(room: Room, required: list[str]) -> tuple[bool, list[str
     if not required:
         return True, []
     room_equip = (room.equipment or "").lower()
-    missing = [r for r in required if r.lower() not in room_equip]
-    return len(missing) == 0, missing
+    if any(r.lower() in room_equip for r in required):
+        return True, []
+    return False, [" / ".join(required)]
 
 
 def _score_room(room, required_seats, session_type):
@@ -84,6 +89,9 @@ def suggest_rooms(db: Session, session_type: str, target_groups: list[str]):
     required_seats = _required_seats(db, target_groups, session_type)
     rooms = db.query(Room).all()
 
+    found = {g.group_code for g in db.query(StudentGroup).filter(StudentGroup.group_code.in_(target_groups)).all()}
+    if not target_groups or found != set(target_groups):
+        raise HTTPException(status_code=400, detail="Select existing student groups")
     results = []
     for r in rooms:
         req_eq = REQUIRED_EQUIPMENT.get(session_type, [])
@@ -155,6 +163,8 @@ def check_room(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if data.session_type not in REQUIRED_ROOM_TYPES:
+        raise HTTPException(status_code=400, detail="Unknown session type")
     room = db.query(Room).filter_by(id=data.room_id).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
