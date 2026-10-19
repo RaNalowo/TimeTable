@@ -1,5 +1,48 @@
 const API = "";  // Same origin as backend
 
+// Present failed requests consistently, including offline/non-JSON responses.
+function showRequestError(message) {
+  let banner = document.getElementById("requestError");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "requestError";
+    banner.setAttribute("role", "alert");
+    banner.style.cssText = "padding:12px;margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #ef4444;white-space:pre-wrap;cursor:pointer";
+    banner.title = "Click to dismiss";
+    banner.onclick = () => banner.remove();
+    (document.querySelector("main") || document.body).prepend(banner);
+  }
+  banner.textContent = message;
+}
+
+async function apiFetch(url, options) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch {
+    const detail = "Cannot reach the server. Check that it is running, then retry.";
+    showRequestError(detail);
+    return new Response(JSON.stringify({ detail }), { status: 503, headers: { "Content-Type": "application/json" } });
+  }
+  if (response.ok) return response;
+  let payload;
+  try { payload = await response.json(); } catch { payload = {}; }
+  let detail = payload.detail;
+  if (Array.isArray(detail)) detail = detail.map(item => `${(item.loc || []).slice(1).join(".")}: ${item.msg}`).join("; ");
+  if (typeof detail !== "string") detail = `Request failed (${response.status}). Please retry or check the server terminal.`;
+  showRequestError(detail);
+  if (response.status === 401 && !String(url).endsWith("/auth/login")) {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+  }
+  return new Response(JSON.stringify({ ...payload, detail }), { status: response.status, headers: { "Content-Type": "application/json" } });
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[ch]));
+}
+
 // ---------- Storage ----------
 function saveToken(token, user) {
   localStorage.setItem("token", token);
@@ -12,12 +55,12 @@ function getToken() {
 
 function getUser() {
   const u = localStorage.getItem("user");
-  return u ? JSON.parse(u) : null;
+  try { return u ? JSON.parse(u) : null; } catch { localStorage.removeItem("user"); return null; }
 }
 
 // ---------- Logout ----------
 function logout() {
-  fetch(API + "/auth/logout", {
+  apiFetch(API + "/auth/logout", {
     method: "POST",
     headers: { "Authorization": "Bearer " + getToken() },
   }).finally(() => {
@@ -86,7 +129,7 @@ function initLoginPage() {
 
     // ---------- Send login request ----------
     try {
-      const res = await fetch(API + "/auth/login", {
+      const res = await apiFetch(API + "/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier, password }),
@@ -117,7 +160,7 @@ async function initDashboard() {
     return;
   }
 
-  const res = await fetch(API + "/dashboard/summary", {
+  const res = await apiFetch(API + "/dashboard/summary", {
     headers: { "Authorization": "Bearer " + token },
   });
 
@@ -199,7 +242,7 @@ async function initDashboard() {
         employee_id: document.getElementById("newEmployeeId").value.trim() || null,
       };
 
-      const r = await fetch(API + "/auth/admin/users", {
+      const r = await apiFetch(API + "/auth/admin/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -227,7 +270,7 @@ async function loadAdminUsers() {
   const box = document.getElementById("adminUsers");
   if (!box) return;
 
-  const res = await fetch(API + "/auth/admin/users", {
+  const res = await apiFetch(API + "/auth/admin/users", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -398,7 +441,7 @@ function onCourseProgramChange() {
 
   if (!progId) return;
 
-  fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } })
+  apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } })
     .then(res => res.json())
     .then(progs => {
       const prog = progs.find(p => p.id === progId);
@@ -432,7 +475,7 @@ async function initCoursesPage() {
   const token = getToken();
   if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
   if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   isAdminCourse = me.roles.includes("admin");
@@ -452,7 +495,7 @@ async function initCoursesPage() {
 
   // 加载 Departments 并获取嵌套的 Programs（复用之前的接口）
   try {
-    const deptRes = await fetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
+    const deptRes = await apiFetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       courseDeptCache = await deptRes.json();
     }
@@ -526,7 +569,7 @@ async function initCoursesPage() {
       const url = editingCourseId ? API + "/courses/" + editingCourseId : API + "/courses";
       const method = editingCourseId ? "PUT" : "POST";
 
-      const r = await fetch(url, {
+      const r = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
         body: JSON.stringify(payload),
@@ -567,7 +610,7 @@ async function loadCourses() {
   const tbody = document.getElementById("courseTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/courses", { headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/courses", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) { tbody.innerHTML = `<tr><td colspan="10">Failed to load courses</td></tr>`; return; }
   allCoursesCache = await res.json();
 
@@ -670,7 +713,7 @@ async function editCourse(id) {
 async function deleteCourse(id) {
   const ok = await showConfirm("Delete Course", "Are you sure you want to delete this course? This cannot be undone.");
   if (!ok) return;
-  const res = await fetch(API + "/courses/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/courses/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
   if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
   showNotice("Course deleted", "success");
@@ -691,7 +734,7 @@ async function initRoomsPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -702,7 +745,7 @@ async function initRoomsPage() {
   const me = await meRes.json();
   isAdmin = me.roles.includes("admin");
 
-  const typesRes = await fetch(API + "/rooms/types");
+  const typesRes = await apiFetch(API + "/rooms/types");
   const types = await typesRes.json();
   const typeSelect = document.getElementById("room_type");
   if (typeSelect) {
@@ -760,7 +803,7 @@ async function initRoomsPage() {
       const url = editingRoomId ? API + "/rooms/" + editingRoomId : API + "/rooms";
       const method = editingRoomId ? "PUT" : "POST";
 
-      const r = await fetch(url, {
+      const r = await apiFetch(url, {
         method,
         headers: {
           "Content-Type": "application/json",
@@ -808,7 +851,7 @@ async function loadRooms() {
   const tbody = document.getElementById("roomTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/rooms", {
+  const res = await apiFetch(API + "/rooms", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -841,7 +884,7 @@ async function loadRooms() {
 }
 
 async function editRoom(id) {
-  const res = await fetch(API + "/rooms", {
+  const res = await apiFetch(API + "/rooms", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -869,7 +912,7 @@ async function deleteRoom(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/rooms/" + id, {
+  const res = await apiFetch(API + "/rooms/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -908,7 +951,7 @@ async function initTeachersPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -969,7 +1012,7 @@ async function initTeachersPage() {
       const url = editingTeacherId ? API + "/teachers/" + editingTeacherId : API + "/teachers";
       const method = editingTeacherId ? "PUT" : "POST";
 
-      const r = await fetch(url, {
+      const r = await apiFetch(url, {
         method,
         headers: {
           "Content-Type": "application/json",
@@ -1019,7 +1062,7 @@ async function loadTeachers() {
   const tbody = document.getElementById("teacherTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/teachers", {
+  const res = await apiFetch(API + "/teachers", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -1053,7 +1096,7 @@ async function loadTeachers() {
 }
 
 async function editTeacher(id) {
-  const res = await fetch(API + "/teachers", {
+  const res = await apiFetch(API + "/teachers", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -1082,7 +1125,7 @@ async function deleteTeacher(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/teachers/" + id, {
+  const res = await apiFetch(API + "/teachers/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -1119,7 +1162,7 @@ const AVAIL_CYCLE = ["preferred", "neutral", "blocked"];
 
 async function initAvailabilityPage() {
   const grid = document.getElementById("gridTable");
-  if (!grid) return;
+  if (!grid || !document.getElementById("teacherSelect")) return;
 
   const token = getToken();
   if (!token) {
@@ -1127,7 +1170,7 @@ async function initAvailabilityPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -1139,14 +1182,16 @@ async function initAvailabilityPage() {
   availIsAdmin = me.roles.includes("admin");
   availIsTeacher = me.roles.includes("teacher");
 
-  const cfgRes = await fetch(API + "/availability/config", {
+  const cfgRes = await apiFetch(API + "/availability/config", {
     headers: { "Authorization": "Bearer " + token },
   });
+  if (!cfgRes.ok) return;
   availConfig = await cfgRes.json();
 
-  const myRes = await fetch(API + "/availability/me", {
+  const myRes = await apiFetch(API + "/availability/me", {
     headers: { "Authorization": "Bearer " + token },
   });
+  if (!myRes.ok) return;
   const myData = await myRes.json();
   availMatrix = myData.matrix;
   availFrozen = myData.is_frozen;
@@ -1247,7 +1292,7 @@ async function saveAvailability() {
     return;
   }
 
-  const res = await fetch(API + "/availability/me", {
+  const res = await apiFetch(API + "/availability/me", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1287,7 +1332,7 @@ function updateFreezeUI() {
 }
 
 async function toggleFreeze() {
-  const res = await fetch(API + "/availability/freeze", {
+  const res = await apiFetch(API + "/availability/freeze", {
     method: "POST",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -1302,7 +1347,7 @@ async function toggleFreeze() {
 }
 
 async function loadTeacherList() {
-  const res = await fetch(API + "/availability/teachers", {
+  const res = await apiFetch(API + "/availability/teachers", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -1317,7 +1362,7 @@ async function viewTeacherAvailability() {
   const box = document.getElementById("teacherView");
   if (!id) { box.innerHTML = ""; return; }
 
-  const res = await fetch(API + "/availability/teacher/" + id, {
+  const res = await apiFetch(API + "/availability/teacher/" + id, {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -1362,7 +1407,7 @@ async function initConstraintsPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -1395,7 +1440,7 @@ async function initConstraintsPage() {
 }
 
 async function loadConstraints() {
-  const res = await fetch(API + "/constraints", {
+  const res = await apiFetch(API + "/constraints", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -1409,7 +1454,11 @@ async function loadConstraints() {
     if (!c) continue;
 
     const toggle = document.getElementById("toggle-" + type);
-    if (toggle) toggle.checked = c.is_active;
+    if (toggle) {
+      toggle.checked = c.is_active;
+      toggle.disabled = !constraintIsAdmin || (type !== "lunch_break" && c.is_active);
+      if (type !== "lunch_break") toggle.title = "Mandatory rule: overlap prevention stays enabled";
+    }
 
     const card = document.getElementById("card-" + type);
     if (card) card.classList.toggle("active", c.is_active);
@@ -1446,7 +1495,7 @@ async function onToggle(type, value) {
       : null,
   };
 
-  const res = await fetch(API + "/constraints/" + type, {
+  const res = await apiFetch(API + "/constraints/" + type, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -1486,7 +1535,7 @@ async function saveLunchConfig() {
   const msg = document.getElementById("msg");
   msg.textContent = "";
 
-  const res = await fetch(API + "/constraints/lunch_break", {
+  const res = await apiFetch(API + "/constraints/lunch_break", {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -1536,7 +1585,7 @@ async function runDemoValidation() {
     },
   ];
 
-  const res = await fetch(API + "/constraints/validate", {
+  const res = await apiFetch(API + "/constraints/validate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1558,7 +1607,7 @@ async function runDemoValidation() {
 
   box.innerHTML = data.conflicts.map(c => `
     <div class="conflict-item">
-      <b>[${c.type}]</b> ${c.message}
+      <b>[${c.type}]</b> ${escapeHTML(c.message)}
     </div>
   `).join("");
 }
@@ -1580,7 +1629,7 @@ async function initSoftConstraintsPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -1604,7 +1653,7 @@ async function loadSoftConstraints() {
   const listEl = document.getElementById("softList");
   if (!listEl) return;
 
-  const res = await fetch(API + "/soft-constraints", {
+  const res = await apiFetch(API + "/soft-constraints", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -1670,7 +1719,7 @@ async function saveAllWeights() {
       return;
     }
 
-    const res = await fetch(API + "/soft-constraints/" + key, {
+    const res = await apiFetch(API + "/soft-constraints/" + key, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -1701,7 +1750,7 @@ async function resetWeights() {
   const msg = document.getElementById("msg");
   msg.textContent = "";
 
-  const res = await fetch(API + "/soft-constraints/reset", {
+  const res = await apiFetch(API + "/soft-constraints/reset", {
     method: "POST",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -1731,7 +1780,7 @@ async function runScorePreview() {
     { day: "Wed", time_slot: "10:15-11:45", course_code: "CS301",   student_group: "CS-2302" },
   ];
 
-  const res = await fetch(API + "/soft-constraints/score", {
+  const res = await apiFetch(API + "/soft-constraints/score", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1753,7 +1802,7 @@ async function runScorePreview() {
     ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
     : data.breakdown.map(b => `
         <div class="breakdown-item">
-          <span class="name">${b.display_name}</span>
+          <span class="name">${escapeHTML(b.display_name)}</span>
           <span class="pill">weight ${b.weight}</span>
           <span class="pill">raw ${b.raw_penalty}</span>
           <span class="penalty">-${b.weighted_penalty}</span>
@@ -1786,7 +1835,7 @@ async function initGeneratorPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -1807,7 +1856,7 @@ async function initGeneratorPage() {
 }
 
 async function loadExistingEntries() {
-  const res = await fetch(API + "/generator/entries", {
+  const res = await apiFetch(API + "/generator/entries", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -1838,7 +1887,7 @@ async function runGeneration() {
   }, 200);
 
   try {
-    const res = await fetch(API + "/generator/generate", {
+    const res = await apiFetch(API + "/generator/generate", {
       method: "POST",
       headers: { "Authorization": "Bearer " + getToken() },
     });
@@ -1861,7 +1910,7 @@ async function runGeneration() {
 
     let msg;
     if (data.status === "success") {
-      msg = `Generated all ${data.placed_count} sessions with zero hard-constraint violations.`;
+      msg = `Generated all ${data.placed_count} sessions. Review the conflict scan before approval.`;
     } else if (data.status === "failed") {
       msg = `Generation failed: 0/${data.total_sessions} sessions could be placed. Check data.`;
     } else {
@@ -1908,7 +1957,7 @@ function renderGeneratorScore(data) {
     ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
     : data.score_breakdown.map(b => `
         <div class="breakdown-item">
-          <span>${b.display_name}</span>
+          <span>${escapeHTML(b.display_name)}</span>
           <span class="pill">weight ${b.weight}</span>
           <span class="pill">raw ${b.raw_penalty}</span>
           <span class="penalty">-${b.weighted_penalty}</span>
@@ -1935,10 +1984,20 @@ function renderGeneratorLog(lines) {
   panel.style.display = "block";
 
   box.innerHTML = lines.map(l => {
-    if (l.startsWith("[OK]"))   return `<div class="ok">${l}</div>`;
-    if (l.startsWith("[FAIL]")) return `<div class="fail">${l}</div>`;
-    return `<div>${l}</div>`;
+    if (l.startsWith("[OK]"))   return `<div class="ok">${escapeHTML(l)}</div>`;
+    if (l.startsWith("[FAIL]")) return `<div class="fail">${escapeHTML(l)}</div>`;
+    return `<div>${escapeHTML(l)}</div>`;
   }).join("");
+}
+
+function generatorGroupLabel(entry) {
+  // Generation returns the full group_code; saved entries return the parent
+  // target_groups value and a separate subgroup number.
+  if (entry.group_code) return entry.group_code;
+  if (!entry.target_groups) return "—";
+  return entry.sub_group
+    ? `${entry.target_groups}-${entry.sub_group}`
+    : entry.target_groups;
 }
 
 function renderGeneratorEntries(entries) {
@@ -1950,11 +2009,11 @@ function renderGeneratorEntries(entries) {
     <tr>
       <td>${e.day}</td>
       <td>${e.time_slot}</td>
-      <td><b>${e.course_code}</b></td>
-      <td><span class="badge">${e.session_type}</span></td>
-      <td>${e.room_code}</td>
-      <td>${e.teacher_name}</td>
-      <td>${e.target_groups}</td>
+      <td><b>${escapeHTML(e.course_code)}</b></td>
+      <td><span class="badge">${escapeHTML(e.session_type)}</span></td>
+      <td>${escapeHTML(e.room_code)}</td>
+      <td>${escapeHTML(e.teacher_name)}</td>
+      <td>${escapeHTML(generatorGroupLabel(e))}</td>
     </tr>
   `).join("");
 }
@@ -1969,7 +2028,7 @@ function renderGeneratorFailed(failed) {
   box.innerHTML = `
     <b>${failed.length} session(s) could not be placed:</b>
     <ul style="margin:6px 0 0 20px;">
-      ${failed.map(f => `<li>${f.course_code} (${f.session_type})</li>`).join("")}
+      ${failed.map(f => `<li>${escapeHTML(f.course_code)} (${escapeHTML(f.session_type)})</li>`).join("")}
     </ul>
   `;
 }
@@ -2001,7 +2060,7 @@ let currentProgramFilter = "all";
 
 // ★ 补回这两个函数
 async function refreshGrid() {
-  const res = await fetch(API + "/conflicts/grid", {
+  const res = await apiFetch(API + "/conflicts/grid", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -2029,20 +2088,20 @@ async function initSchedulePage() {
   const token = getToken();
   if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
   if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   scheduleIsAdmin = me.roles.includes("admin");
 
-  const roomsRes = await fetch(API + "/rooms", { headers: { "Authorization": "Bearer " + token } });
+  const roomsRes = await apiFetch(API + "/rooms", { headers: { "Authorization": "Bearer " + token } });
   if (roomsRes.ok) roomsCache = await roomsRes.json();
 
-  const groupsRes = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
+  const groupsRes = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
   if (groupsRes.ok) scheduleGroupsCache = await groupsRes.json();
 
   // ★ 直接去填充 HTML 里已经存在的下拉框（不再动态注入）
   try {
-    const progRes = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
+    const progRes = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
     if (progRes.ok) {
       const progs = await progRes.json();
       const sel = document.getElementById("programFilter");
@@ -2062,7 +2121,7 @@ async function initSchedulePage() {
   const slotSel = document.getElementById("moveSlot");
   daySel.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `<option value="${d}">${d}</option>`).join("");
 
-  const slotsRes = await fetch(API + "/time-slots/active", { headers: { "Authorization": "Bearer " + token } });
+  const slotsRes = await apiFetch(API + "/time-slots/active", { headers: { "Authorization": "Bearer " + token } });
   const slots = slotsRes.ok ? await slotsRes.json() : [];
   slotSel.innerHTML = slots.map(s => `<option value="${s}">${s}</option>`).join("");
 
@@ -2113,13 +2172,13 @@ function renderScheduleGrid() {
                  draggable="true"
                  ondragstart="onDragStart(event, ${e.id})"
                  ondragend="onDragEnd(event)"
-                 onclick="openMoveModal(${e.id}, '${e.course_code}', '${day}', '${slot}')"
+                 onclick="openMoveModal(${e.id}, ${escapeHTML(JSON.stringify(e.course_code))}, '${day}', '${slot}')"
                  onmouseenter="showEntryTooltip(event, ${e.id})"
                  onmouseleave="hideTooltip()">
               <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
-              <div class="course">${e.course_code} <span class="type">${e.session_type}</span></div>
-              <div class="meta">${e.room_code} · ${e.teacher_name || "-"}</div>
-              <div class="meta" style="font-size:10px;color:#888;">${e.target_groups || ""}</div>
+              <div class="course">${escapeHTML(e.course_code)} <span class="type">${escapeHTML(e.session_type)}</span></div>
+              <div class="meta">${escapeHTML(e.room_code)} · ${escapeHTML(e.teacher_name || "-")}</div>
+              <div class="meta" style="font-size:10px;color:#888;">${escapeHTML(e.target_groups || "")}</div>
             </div>
           `;
         });
@@ -2149,10 +2208,10 @@ function updateBanner() {
   } else if (warnings > 0) {
     banner.className = "show warning";
     banner.innerHTML = `<span class="count">${warnings}</span>
-      <span>capacity warning(s) detected. The schedule is valid but some rooms may be too small.</span>`;
+      <span>warning(s) detected. Review the reported issues before approval.</span>`;
   } else {
     banner.className = "show success";
-    banner.innerHTML = `No conflicts. The schedule satisfies all hard constraints.`;
+    banner.innerHTML = `No conflicts detected by the current checks. Review coverage and preferences separately.`;
   }
 }
 
@@ -2167,12 +2226,12 @@ function renderConflicts() {
 
   box.innerHTML = conflicts.map(c => `
     <div class="conflict-item ${c.severity}">
-      <b>${c.message}</b>
+      <b>${escapeHTML(c.message)}</b>
       ${
         c.details.courses
-          ? `Courses involved: ${c.details.courses.join(", ")}`
+          ? `Courses involved: ${escapeHTML(c.details.courses.join(", "))}`
           : c.details.course
-          ? `Course: ${c.details.course}`
+          ? `Course: ${escapeHTML(c.details.course)}`
           : ""
       }
       ${c.details.excess ? ` · Over capacity by ${c.details.excess} students` : ""}
@@ -2195,16 +2254,16 @@ function showEntryTooltip(evt, entryId) {
   );
 
   let html = `
-    <div class="tt-title">${entry.course_code} · ${entry.session_type}</div>
-    <div class="tt-row"><span class="tt-label">Room</span>${entry.room_code}</div>
-    <div class="tt-row"><span class="tt-label">Teacher</span>${entry.teacher_name || "-"}</div>
-    <div class="tt-row"><span class="tt-label">Groups</span>${entry.target_groups || "-"}</div>
+    <div class="tt-title">${escapeHTML(entry.course_code)} · ${escapeHTML(entry.session_type)}</div>
+    <div class="tt-row"><span class="tt-label">Room</span>${escapeHTML(entry.room_code)}</div>
+    <div class="tt-row"><span class="tt-label">Teacher</span>${escapeHTML(entry.teacher_name || "-")}</div>
+    <div class="tt-row"><span class="tt-label">Groups</span>${escapeHTML(entry.target_groups || "-")}</div>
   `;
 
   if (conflicts.length > 0) {
     html += `<div class="tt-row" style="margin-top:8px;border-top:1px solid #374151;padding-top:6px;">`;
     conflicts.forEach(c => {
-      html += `<div style="color:#fca5a5;">⚠ ${c.message}</div>`;
+      html += `<div style="color:#fca5a5;">⚠ ${escapeHTML(c.message)}</div>`;
     });
     html += `</div>`;
   }
@@ -2260,7 +2319,7 @@ async function submitMove() {
   const time_slot = document.getElementById("moveSlot").value;
   const room_id = parseInt(document.getElementById("moveRoom").value, 10);
 
-  const res = await fetch(API + "/conflicts/entries/" + currentMoveEntry, {
+  const res = await apiFetch(API + "/conflicts/entries/" + currentMoveEntry, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -2373,7 +2432,7 @@ async function onCellDrop(evt, day, slot) {
 
 async function moveEntryToSlot(entryId, day, time_slot) {
   try {
-    const res = await fetch(API + "/conflicts/entries/" + entryId, {
+    const res = await apiFetch(API + "/conflicts/entries/" + entryId, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -2415,7 +2474,7 @@ async function confirmSwap() {
   if (!pendingSwap) return;
 
   try {
-    const res = await fetch(API + "/conflicts/swap", {
+    const res = await apiFetch(API + "/conflicts/swap", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2452,7 +2511,7 @@ async function initRoomFittingPage() {
     return;
   }
 
-  const groupsRes = await fetch(API + "/student-groups", {
+  const groupsRes = await apiFetch(API + "/student-groups", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (groupsRes.ok) {
@@ -2481,7 +2540,7 @@ async function initRoomFittingPage() {
       return;
     }
 
-    const res = await fetch(API + "/room-fitting/suggest", {
+    const res = await apiFetch(API + "/room-fitting/suggest", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2597,7 +2656,7 @@ async function initSemestersPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -2682,7 +2741,7 @@ async function initSemestersPage() {
       : API + "/semesters";
     const method = editingSemesterId ? "PUT" : "POST";
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -2747,7 +2806,7 @@ async function loadSemesters() {
   const tbody = document.getElementById("semesterTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/semesters", {
+  const res = await apiFetch(API + "/semesters", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -2791,7 +2850,7 @@ async function loadSemesters() {
 }
 
 async function editSemester(id) {
-  const res = await fetch(API + "/semesters", {
+  const res = await apiFetch(API + "/semesters", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -2810,7 +2869,7 @@ async function editSemester(id) {
 }
 
 async function activateSemester(id) {
-  const res = await fetch(API + "/semesters/" + id + "/activate", {
+  const res = await apiFetch(API + "/semesters/" + id + "/activate", {
     method: "POST",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -2829,7 +2888,7 @@ async function deleteSemester(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/semesters/" + id, {
+  const res = await apiFetch(API + "/semesters/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -2941,7 +3000,7 @@ async function initStudentGroupsPage() {
   const token = getToken();
   if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
   if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   groupIsAdmin = me.roles.includes("admin");
@@ -2961,7 +3020,7 @@ async function initStudentGroupsPage() {
 
   // 获取 Departments (包含嵌套的 Programs)
   try {
-    const deptRes = await fetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
+    const deptRes = await apiFetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       departmentsCache = await deptRes.json();
       const deptSel = document.getElementById("department");
@@ -2970,7 +3029,7 @@ async function initStudentGroupsPage() {
     }
 
     // ★ 还需要获取 Programs 拿到 Tracks
-    const progRes = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
+    const progRes = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
     if (progRes.ok) {
       programsCache = await progRes.json();
     }
@@ -3018,12 +3077,13 @@ async function initStudentGroupsPage() {
       enrollment_year: enrollment_year,
       year_override: year_override,
       student_count: student_count,
+      sub_group_count: Number(document.getElementById("sub_group_count").value),
     };
 
     const url = editingGroupId ? API + "/student-groups/" + editingGroupId : API + "/student-groups";
     const method = editingGroupId ? "PUT" : "POST";
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method,
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
@@ -3055,7 +3115,7 @@ async function loadStudentGroups() {
   const tbody = document.getElementById("groupTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) { tbody.innerHTML = `<tr><td colspan="8">Failed to load groups</td></tr>`; return; }
   const groups = await res.json();
 
@@ -3091,7 +3151,7 @@ async function loadStudentGroups() {
 }
 
 async function editGroup(id) {
-  const res = await fetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const g = list.find(x => x.id === id);
@@ -3099,6 +3159,7 @@ async function editGroup(id) {
 
   document.getElementById("group_code").value = g.group_code;
   document.getElementById("student_count").value = g.student_count;
+  document.getElementById("sub_group_count").value = g.sub_group_count;
   document.getElementById("year_override").value = g.year_override || "";
 
   // 回填联动
@@ -3124,7 +3185,7 @@ async function deleteGroup(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/student-groups/" + id, {
+  const res = await apiFetch(API + "/student-groups/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -3201,7 +3262,7 @@ async function initTimeSlotsPage() {
     return;
   }
 
-  const meRes = await fetch(API + "/auth/me", {
+  const meRes = await apiFetch(API + "/auth/me", {
     headers: { "Authorization": "Bearer " + token },
   });
   if (!meRes.ok) {
@@ -3260,7 +3321,7 @@ async function initTimeSlotsPage() {
       : API + "/time-slots";
     const method = editingSlotId ? "PUT" : "POST";
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -3312,7 +3373,7 @@ async function loadTimeSlots() {
   const tbody = document.getElementById("slotTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/time-slots", {
+  const res = await apiFetch(API + "/time-slots", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) {
@@ -3348,7 +3409,7 @@ async function loadTimeSlots() {
 }
 
 async function editSlot(id) {
-  const res = await fetch(API + "/time-slots", {
+  const res = await apiFetch(API + "/time-slots", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   if (!res.ok) return;
@@ -3373,7 +3434,7 @@ async function deleteSlot(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/time-slots/" + id, {
+  const res = await apiFetch(API + "/time-slots/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -3402,7 +3463,7 @@ async function checkTimeSlotConsistency() {
     tr.classList.remove("row-error");
   });
 
-  const res = await fetch(API + "/time-slots/validate", {
+  const res = await apiFetch(API + "/time-slots/validate", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
 
@@ -3455,7 +3516,7 @@ async function checkTimeSlotConsistency() {
         <div class="icon">${icon}</div>
         <div class="body">
           <span class="type-tag">${i.type.replace("_", " ")}</span>
-          <span class="msg">${i.message}</span>
+          <span class="msg">${escapeHTML(i.message)}</span>
         </div>
       </div>
     `;
@@ -3557,7 +3618,7 @@ async function initProgramsPage() {
   const token = getToken();
   if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
   if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   programIsAdmin = me.roles.includes("admin");
@@ -3577,7 +3638,7 @@ async function initProgramsPage() {
 
   // Load departments
   try {
-    const deptRes = await fetch(API + "/programs/departments", { headers: { "Authorization": "Bearer " + token } });
+    const deptRes = await apiFetch(API + "/programs/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       const depts = await deptRes.json();
       const sel = document.getElementById("department_id");
@@ -3620,7 +3681,7 @@ async function initProgramsPage() {
     const url = editingProgramId ? API + "/programs/" + editingProgramId : API + "/programs";
     const method = editingProgramId ? "PUT" : "POST";
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method,
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
@@ -3649,7 +3710,7 @@ async function loadPrograms() {
   const tbody = document.getElementById("programTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) { tbody.innerHTML = `<tr><td colspan="6">Failed to load</td></tr>`; return; }
   const programs = await res.json();
 
@@ -3673,7 +3734,7 @@ async function loadPrograms() {
 }
 
 async function editProgram(id) {
-  const res = await fetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
+  const res = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const p = list.find(x => x.id === id);
@@ -3698,7 +3759,7 @@ async function deleteProgram(id) {
   );
   if (!ok) return;
 
-  const res = await fetch(API + "/programs/" + id, {
+  const res = await apiFetch(API + "/programs/" + id, {
     method: "DELETE",
     headers: { "Authorization": "Bearer " + getToken() },
   });
@@ -3740,7 +3801,7 @@ async function runValidation() {
   list.innerHTML = "";
   summaryBox.style.display = "none";
 
-  const res = await fetch(API + "/validation/report", {
+  const res = await apiFetch(API + "/validation/report", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
   const data = await res.json();
@@ -3756,7 +3817,7 @@ async function runValidation() {
   summaryGrid.innerHTML = `
     <div class="summary-card">
       <div class="label">Active Semester</div>
-      <div class="value" style="font-size:14px;">${s.active_semester || "None"}</div>
+      <div class="value" style="font-size:14px;">${escapeHTML(s.active_semester || "None")}</div>
     </div>
     <div class="summary-card">
       <div class="label">Courses</div>
@@ -3784,7 +3845,7 @@ async function runValidation() {
   // Banner
   if (data.ok) {
     banner.className = "banner show ok";
-    banner.innerHTML = `<span>✓ All data is valid. Ready to generate.</span>`;
+    banner.textContent = data.warning_count ? `No blocking errors. Review ${data.warning_count} warning(s) before generating.` : "✓ All checks passed. Ready to generate.";
   } else {
     banner.className = "banner show fail";
     banner.innerHTML = `
@@ -3806,7 +3867,7 @@ async function runValidation() {
         <div class="icon">${icon}</div>
         <div class="body">
           <span class="type">${i.category}</span>
-          <span>${i.message}</span>
+          <span>${escapeHTML(i.message)}</span>
         </div>
       </div>
     `;

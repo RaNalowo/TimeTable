@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/semesters", tags=["semesters"])
 class SemesterRequest(BaseModel):
     name: str = Field(min_length=1, max_length=50)
     academic_year: int = Field(ge=2000, le=2100)
-    term: str = Field(min_length=1, max_length=20)
+    term: Literal["Fall", "Spring"]
     start_date: str
     end_date: str
 

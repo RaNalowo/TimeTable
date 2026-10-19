@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from db.database import get_db
@@ -14,10 +14,17 @@ router = APIRouter(prefix="/student-groups", tags=["student-groups"])
 class StudentGroupRequest(BaseModel):
     group_code: str = Field(min_length=1)
     program: str | None = None
-    enrollment_year: int | None = None
-    year_override: int | None = None
-    student_count: int = 0
+    enrollment_year: int | None = Field(default=None, ge=2000, le=2100)
+    year_override: int | None = Field(default=None, ge=1, le=9)
+    student_count: int = Field(gt=0)
+    sub_group_count: int = Field(default=3, ge=1)
     track: str | None = None  # ★ 新增
+
+    @model_validator(mode="after")
+    def valid_subgroups(self):
+        if self.sub_group_count > self.student_count:
+            raise ValueError("Subgroup count cannot exceed student count")
+        return self
 
 
 def group_to_dict(g: StudentGroup, db: Session):
@@ -45,6 +52,7 @@ def group_to_dict(g: StudentGroup, db: Session):
         "year_override": g.year_override,
         "current_year": current_year,
         "student_count": g.student_count,
+        "sub_group_count": g.sub_group_count,
         "track": g.track,  # ★ 新增
     }
 
@@ -87,6 +95,7 @@ def create_group(data: StudentGroupRequest, admin: User = Depends(require_role("
         enrollment_year=data.enrollment_year,
         year_override=data.year_override,
         student_count=data.student_count,
+        sub_group_count=data.sub_group_count,
         track=data.track,  # ★ 新增
     )
     db.add(g)
@@ -118,6 +127,7 @@ def update_group(group_id: int, data: StudentGroupRequest, admin: User = Depends
     g.enrollment_year = data.enrollment_year
     g.year_override = data.year_override
     g.student_count = data.student_count
+    g.sub_group_count = data.sub_group_count
     g.track = data.track  # ★ 新增
     db.commit()
     db.refresh(g)

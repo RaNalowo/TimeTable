@@ -9,6 +9,7 @@ from db.database import get_db
 from db.models import Constraint, User
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
+from services.scheduling_data import validate_lunch, read_lunch
 
 router = APIRouter(prefix="/constraints", tags=["constraints"])
 
@@ -114,6 +115,8 @@ def update_constraint(
 ):
     if constraint_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Unknown constraint type")
+    if constraint_type in {"no_overlap_rooms", "no_overlap_teachers"} and not data.is_active:
+        raise HTTPException(status_code=400, detail="Room and teacher overlap prevention are mandatory and cannot be disabled.")
 
     ensure_defaults(db)
     row = db.query(Constraint).filter_by(constraint_type=constraint_type).first()
@@ -121,7 +124,8 @@ def update_constraint(
         raise HTTPException(status_code=404, detail="Constraint not found")
 
     if constraint_type == "lunch_break":
-        cfg = data.config or {}
+        cfg = {"start": "12:00", "end": "13:00", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], **(data.config or {})}
+        validate_lunch(cfg)
         start = cfg.get("start")
         end = cfg.get("end")
         days = cfg.get("days", [])

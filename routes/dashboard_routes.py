@@ -45,77 +45,8 @@ def today_abbrev():
 # ---------- Soft scoring (uses DB time slots) ----------
 
 def _compute_live_score(db, entries):
-    soft_rows = {c.constraint_key: c for c in db.query(SoftConstraint).all()}
-    slots = get_active_slots(db) or []
-
-    if not slots:
-        return {"score": 100, "breakdown": []}
-
-    def penalty_minimize_gaps(entries):
-        groups = {}
-        for e in entries:
-            g = _group_code(e)
-            label = _slot_label(e)
-            if not g or not label:
-                continue
-            groups.setdefault((g, e.day), []).append(label)
-        total = 0
-        for _, ss in groups.items():
-            if len(ss) < 2:
-                continue
-            idxs = sorted(slots.index(s) for s in ss if s in slots)
-            if len(idxs) < 2:
-                continue
-            span = idxs[-1] - idxs[0] + 1
-            total += (span - len(idxs))
-        return min(total * 15, 100)
-
-    def penalty_early(entries):
-        first = slots[0]
-        return min(sum(1 for e in entries if _slot_label(e) == first) * 20, 100)
-
-    def penalty_late(entries):
-        last = slots[-1]
-        return min(sum(1 for e in entries if _slot_label(e) == last) * 20, 100)
-
-    def penalty_compact(entries):
-        groups = {}
-        for e in entries:
-            g = _group_code(e)
-            if not g:
-                continue
-            groups.setdefault(g, set()).add(e.day)
-        excess = sum(max(0, len(days) - 3) for days in groups.values())
-        return min(excess * 25, 100)
-
-    fns = {
-        "minimize_gaps": penalty_minimize_gaps,
-        "avoid_early_mornings": penalty_early,
-        "avoid_late_evenings": penalty_late,
-        "compact_days": penalty_compact,
-    }
-
-    total_penalty = 0
-    breakdown = []
-    for key, fn in fns.items():
-        row = soft_rows.get(key)
-        if not row or not row.is_enabled or row.weight == 0:
-            continue
-        raw = fn(entries)
-        weighted = raw * row.weight / 10
-        total_penalty += weighted
-        breakdown.append({
-            "constraint_key": key,
-            "display_name": row.display_name,
-            "weight": row.weight,
-            "raw_penalty": raw,
-            "weighted_penalty": round(weighted, 2),
-        })
-
-    return {
-        "score": max(0, round(100 - total_penalty, 2)),
-        "breakdown": breakdown,
-    }
+    from services.scoring import score_schedule, saved_entries
+    return score_schedule(db, saved_entries(entries))
 
 
 # ---------- Route ----------
@@ -132,6 +63,14 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
         all_entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
     else:
         all_entries = []
+
+    # Personal cards must not include other groups' or teachers' classes.
+    if "admin" not in roles:
+        if "teacher" in roles:
+            teacher = db.query(Teacher).filter((Teacher.user_id == user.id) | (Teacher.email == user.email)).first()
+            all_entries = [e for e in all_entries if teacher and e.teacher_id == teacher.id]
+        else:
+            all_entries = [e for e in all_entries if user.group_id and e.group_id == user.group_id]
 
     total_sessions = len(all_entries)
 

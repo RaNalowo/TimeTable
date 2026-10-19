@@ -88,68 +88,6 @@ def ensure_defaults(db: Session):
         db.commit()
 
 
-# ---------- Penalty functions (now take slots list) ----------
-
-def penalty_minimize_gaps(entries, slots):
-    if not entries or not slots:
-        return 0
-    groups = {}
-    for e in entries:
-        key = (e.student_group, e.day)
-        groups.setdefault(key, []).append(e.time_slot)
-
-    total_gap = 0
-    total_sessions = 0
-    for _, ss in groups.items():
-        total_sessions += len(ss)
-        if len(ss) < 2:
-            continue
-        indices = sorted(slots.index(s) for s in ss if s in slots)
-        if len(indices) < 2:
-            continue
-        span = indices[-1] - indices[0] + 1
-        total_gap += (span - len(indices))
-
-    if total_sessions == 0:
-        return 0
-    ratio = total_gap / total_sessions
-    return min(round(ratio * 150), 100)
-
-
-def penalty_avoid_early_mornings(entries, slots):
-    if not entries or not slots:
-        return 0
-    first = slots[0]
-    count = sum(1 for e in entries if e.time_slot == first)
-    ratio = count / len(entries)
-    return min(round(ratio * 200), 100)
-
-
-def penalty_avoid_late_evenings(entries, slots):
-    if not entries or not slots:
-        return 0
-    last = slots[-1]
-    count = sum(1 for e in entries if e.time_slot == last)
-    ratio = count / len(entries)
-    return min(round(ratio * 200), 100)
-
-
-def penalty_compact_days(entries, slots):
-    if not entries:
-        return 0
-    groups = {}
-    for e in entries:
-        key = e.student_group or "_"
-        groups.setdefault(key, set()).add(e.day)
-
-    if not groups:
-        return 0
-    # Average distinct days per group; ideal is <= 3
-    avg_days = sum(len(d) for d in groups.values()) / len(groups)
-    excess = max(0, avg_days - 3)
-    return min(round(excess * 40), 100)
-
-
 # ---------- Routes ----------
 
 @router.get("")
@@ -210,41 +148,11 @@ def score_schedule(
     db: Session = Depends(get_db),
 ):
     ensure_defaults(db)
-    rows = {c.constraint_key: c for c in db.query(SoftConstraint).all()}
-    slots = get_active_slots(db) or []
-
-    entries = data.entries
-    breakdown = []
-    total_penalty = 0.0
-
-    penalty_fns = {
-        "minimize_gaps": penalty_minimize_gaps,
-        "avoid_early_mornings": penalty_avoid_early_mornings,
-        "avoid_late_evenings": penalty_avoid_late_evenings,
-        "compact_days": penalty_compact_days,
-    }
-
-    for key, fn in penalty_fns.items():
-        row = rows.get(key)
-        if not row or not row.is_enabled or row.weight == 0:
-            continue
-
-        raw_penalty = fn(entries, slots)
-        weighted = raw_penalty * row.weight / 10
-        total_penalty += weighted
-
-        breakdown.append({
-            "constraint_key": key,
-            "display_name": row.display_name,
-            "weight": row.weight,
-            "raw_penalty": raw_penalty,
-            "weighted_penalty": round(weighted, 2),
-        })
-
-    final_score = max(0, round(100 - total_penalty, 2))
-    return {
-        "total_score": final_score,
-        "total_penalty": round(total_penalty, 2),
-        "checked_entries": len(entries),
-        "breakdown": breakdown,
-    }
+    from services.scoring import score_schedule as evaluate
+    slots = get_active_slots(db)
+    if any(e.day not in {"Mon", "Tue", "Wed", "Thu", "Fri"} or e.time_slot not in slots for e in data.entries):
+        raise HTTPException(status_code=400, detail="Score entries must use working days and active time slots")
+    result = evaluate(db, [{"day": e.day, "time_slot": e.time_slot,
+                            "group_code": e.student_group} for e in data.entries])
+    return {"total_score": result["score"], "total_penalty": result["total_penalty"],
+            "checked_entries": len(data.entries), "breakdown": result["breakdown"]}

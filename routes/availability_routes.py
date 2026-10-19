@@ -1,4 +1,5 @@
 import json
+from typing import Literal
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,7 @@ from db.models import TeacherAvailability, PreferenceWindow, User, Teacher, Role
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
 from services.time_slots import get_active_slots
+from services.scheduling_data import read_availability
 
 router = APIRouter(prefix="/availability", tags=["availability"])
 
@@ -20,7 +22,7 @@ DEFAULT_MAX_HOURS = 20
 
 
 class MatrixPayload(BaseModel):
-    matrix: dict
+    matrix: dict[str, dict[str, Literal["preferred", "neutral", "blocked"]]]
 
 
 def get_or_create_window(db: Session) -> PreferenceWindow:
@@ -109,7 +111,7 @@ def get_my_availability(
     slots = get_active_slots(db)
 
     row = db.query(TeacherAvailability).filter_by(user_id=user.id).first()
-    matrix = json.loads(row.matrix_json) if row else default_matrix(db)
+    matrix = read_availability(row.matrix_json) if row else default_matrix(db)
 
     # Ensure every active slot key exists in the matrix
     for day in DAYS:
@@ -147,10 +149,16 @@ def save_my_availability(
 
     slots = get_active_slots(db)
     matrix = data.matrix
+    if not slots:
+        raise HTTPException(status_code=400, detail="No active time slots configured")
+    if set(matrix) != set(DAYS):
+        raise HTTPException(status_code=400, detail="Availability must contain exactly Monday through Friday")
 
     for day in DAYS:
         if day not in matrix:
             raise HTTPException(status_code=400, detail=f"Missing day: {day}")
+        if set(matrix[day]) - set(slots):
+            raise HTTPException(status_code=400, detail=f"Unknown time slot in {day}")
         for slot in slots:
             status = matrix[day].get(slot, "neutral")
             if status not in VALID_STATUS:
@@ -200,7 +208,7 @@ def get_teacher_availability(
         raise HTTPException(status_code=404, detail="User not found")
 
     row = db.query(TeacherAvailability).filter_by(user_id=user_id).first()
-    matrix = json.loads(row.matrix_json) if row else default_matrix(db)
+    matrix = read_availability(row.matrix_json) if row else default_matrix(db)
 
     teacher = get_teacher_for_user(db, target)
     max_hours = teacher.max_weekly_hours if teacher else DEFAULT_MAX_HOURS

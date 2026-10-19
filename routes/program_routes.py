@@ -75,6 +75,9 @@ def update_program(program_id: int, data: ProgramRequest, admin: User = Depends(
     if dup:
         raise HTTPException(status_code=400, detail="Program code already exists")
 
+    if not db.get(Department, data.department_id):
+        raise HTTPException(status_code=400, detail="Department not found")
+
     p.program_code = data.program_code
     p.program_name = data.program_name
     p.department_id = data.department_id

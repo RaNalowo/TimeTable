@@ -94,6 +94,8 @@ def validate_slot(db: Session, label: str, sort_order: int, is_active: bool, exc
         for s in siblings:
             p = parse_slot(s.slot_label)
             if p:
+                if start < p[1] and p[0] < end:
+                    raise HTTPException(status_code=400, detail=f"Time slot overlaps with {s.slot_label}.")
                 compare.append((s.sort_order, p[0], s.slot_label))
         compare.append((sort_order, start, label))
 
