@@ -22,31 +22,45 @@
     }
     .panel h2 { margin-top: 0; font-size: 16px; }
 
+    /* 表单 Grid 布局 */
     form#teacherForm {
-      display: grid; gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      display: grid; gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       align-items: start;
     }
-    .form-field { display: flex; flex-direction: column; gap: 4px; }
-    form#teacherForm input {
+
+    .form-field {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+
+    /* 强制统一 Input 和 Select 的高度，保证完美对齐 */
+    form#teacherForm input, form#teacherForm select {
       padding: 8px 10px; border: 1px solid #ccc;
       border-radius: 6px; font-size: 14px; width: 100%;
+      height: 38px; outline: none;
+    }
+    form#teacherForm input:focus, form#teacherForm select:focus {
+      border-color: #2563eb;
     }
     form#teacherForm input.input-error { border: 2px solid #dc2626; }
+
     form#teacherForm button {
       padding: 9px 14px; background: #2563eb; color: #fff;
       border: none; border-radius: 6px; cursor: pointer;
-      height: 38px; align-self: start;
+      height: 38px; align-self: start; font-weight: 600;
+      transition: background 0.15s;
     }
     form#teacherForm button:hover { background: #1d4ed8; }
 
     .field-msg { color: #dc2626; font-size: 12px; min-height: 16px; }
     #formMsg { margin: 8px 0 0; font-size: 13px; min-height: 18px; }
 
+    /* 表格样式 */
     table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
     th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f9fafb; font-weight: 600; }
     tr:hover { background: #f9fafb; }
+
     .badge {
       display: inline-block; padding: 2px 10px; border-radius: 10px;
       font-size: 12px; background: #e0e7ff; color: #3730a3;
@@ -56,10 +70,24 @@
       border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
       margin-right: 4px;
     }
+    .btn-edit:hover { background: #0e7490; }
     .btn-del {
       padding: 4px 10px; background: #dc2626; color: #fff;
       border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
     }
+    .btn-del:hover { background: #b91c1c; }
+
+    /* Tag 标签样式 */
+    .tag {
+      display: inline-flex; align-items: center; background: #e0e7ff;
+      color: #3730a3; padding: 4px 10px; border-radius: 16px;
+      font-size: 13px; font-weight: 600; border: 1px solid #c7d2fe;
+    }
+    .tag-close {
+      margin-left: 8px; cursor: pointer; font-size: 16px;
+      line-height: 1; color: #dc2626; font-weight: bold;
+    }
+    .tag-close:hover { color: #991b1b; }
   </style>
 </head>
 <body>
@@ -71,6 +99,7 @@
         <h1>Manage Faculty Profiles</h1>
       </header>
 
+      <!-- 表单区域 -->
       <div class="panel" id="formPanel" style="display:none;">
         <h2 id="formTitle">Add Faculty</h2>
 
@@ -111,17 +140,35 @@
             <div class="field-msg" id="max_daily_hoursMsg"></div>
           </div>
 
-          <div class="form-field">
-            <input id="qualified_subjects" placeholder="Qualified subjects (comma separated)" />
+          <!-- ★ 高级 Tag 输入框 -->
+          <div class="form-field" style="grid-column: 1 / -1; position: relative; margin-top: 5px;">
+            <label style="font-size:13px; color:#555; margin-bottom:4px; font-weight:600;">Qualified Subjects (Course Codes)</label>
+
+            <!-- 选中的标签展示区 -->
+            <div id="selectedCoursesContainer" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; min-height:24px;">
+              <!-- JavaScript 会动态生成标签 -->
+            </div>
+
+            <!-- 搜索输入框 -->
+            <input id="courseSearchInput" autocomplete="off" placeholder="Type course code or name (e.g. CSS 105)..." />
+
+            <!-- 下拉联想框 (默认隐藏) -->
+            <div id="courseSuggestions" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #ccc; border-radius:6px; max-height:200px; overflow-y:auto; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); margin-top:2px;">
+              <!-- JavaScript 会动态生成选项 -->
+            </div>
+
             <div class="field-msg" id="qualified_subjectsMsg"></div>
           </div>
 
-          <button type="submit" id="formSubmitBtn">Save Faculty</button>
+          <button type="submit" id="formSubmitBtn" style="grid-column: 1 / -1; width: 180px; margin-top: 10px;">
+            Save Faculty
+          </button>
         </form>
 
         <p id="formMsg"></p>
       </div>
 
+      <!-- 表格区域 -->
       <div class="panel">
         <h2>Faculty Directory</h2>
         <p id="accessMsg" style="font-size:13px;color:#888;"></p>
@@ -147,7 +194,7 @@
     </main>
   </div>
 
-    <!-- Global notice -->
+  <!-- Global notice -->
   <div id="pageNotice" style="
     display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
     padding:12px 20px; border-radius:8px; z-index:3000;

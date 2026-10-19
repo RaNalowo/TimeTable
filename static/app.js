@@ -892,61 +892,118 @@ function filterRooms() {
 }
 
 // ============================================================
-// Manage Faculty Profiles
+// Manage Faculty Profiles (Tag Input)
 // ============================================================
-
 let editingTeacherId = null;
 let isAdminTeacher = false;
+let allCoursesForTeacher = [];
+let selectedTeacherCourses = [];
+
+function renderSelectedCourses() {
+  const container = document.getElementById("selectedCoursesContainer");
+  if (!container) return;
+
+  container.innerHTML = selectedTeacherCourses.map(c => `
+    <div style="display:inline-flex; align-items:center; background:#e0e7ff; color:#3730a3; padding:4px 10px; border-radius:16px; font-size:13px; font-weight:600; border:1px solid #c7d2fe;">
+      ${c.code} - ${c.name}
+      <span onclick="removeCourseTag('${c.code}')" style="margin-left:8px; cursor:pointer; font-size:16px; line-height:1; color:#dc2626;">&times;</span>
+    </div>
+  `).join("");
+}
+
+function removeCourseTag(code) {
+  selectedTeacherCourses = selectedTeacherCourses.filter(c => c.code !== code);
+  renderSelectedCourses();
+}
+
+function addCourseTag(code, name) {
+  selectedTeacherCourses.push({ code, name });
+  renderSelectedCourses();
+
+  const input = document.getElementById("courseSearchInput");
+  if (input) input.value = "";
+  const suggest = document.getElementById("courseSuggestions");
+  if (suggest) suggest.style.display = "none";
+}
 
 async function initTeachersPage() {
   const table = document.getElementById("teacherTable");
   if (!table) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await fetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await fetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   isAdminTeacher = me.roles.includes("admin");
 
   const formPanel = document.getElementById("formPanel");
   const accessMsg = document.getElementById("accessMsg");
   const actionCol = document.getElementById("actionCol");
-
   if (isAdminTeacher) {
-    if (formPanel) formPanel.style.display = "block";
-    if (accessMsg) accessMsg.textContent = "";
+    formPanel.style.display = "block"; accessMsg.textContent = "";
   } else {
-    if (formPanel) formPanel.style.display = "none";
-    if (actionCol) actionCol.style.display = "none";
-    if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify faculty profiles.";
+    formPanel.style.display = "none"; actionCol.style.display = "none";
+    accessMsg.textContent = "Read-only.";
   }
 
-  const form = document.getElementById("teacherForm");
-  if (form) {
-    // Real-time validation
-    ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const evt = el.tagName === "SELECT" ? "change" : "input";
-      el.addEventListener(evt, () => {
-        validateTeacherField(id);
-        const fm = document.getElementById("formMsg");
-        if (fm) fm.textContent = "";
-      });
+  // 获取所有课程
+  try {
+    const courseRes = await fetch(API + "/courses", { headers: { "Authorization": "Bearer " + token } });
+    if (courseRes.ok) {
+      allCoursesForTeacher = await courseRes.json();
+    }
+  } catch (e) { console.error(e); }
+
+  // 绑定搜索事件
+  const searchInput = document.getElementById("courseSearchInput");
+  const suggestBox = document.getElementById("courseSuggestions");
+
+  if (searchInput && suggestBox) {
+    // 输入事件
+    searchInput.addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      if (!q) { suggestBox.style.display = "none"; return; }
+
+      const matches = allCoursesForTeacher.filter(c =>
+        !selectedTeacherCourses.some(sc => sc.code === c.course_code) &&
+        (c.course_code.toLowerCase().includes(q) || c.course_name.toLowerCase().includes(q))
+      );
+
+      if (matches.length === 0) {
+        suggestBox.innerHTML = `<div style="padding:10px; color:#888; font-size:13px;">No courses found</div>`;
+      } else {
+        // 截取前 15 个防止卡顿
+        suggestBox.innerHTML = matches.slice(0, 15).map(c => `
+          <div onclick="addCourseTag('${c.course_code}', '${c.course_name.replace(/'/g, "\\'")}')"
+               style="padding:10px; cursor:pointer; border-bottom:1px solid #eee; font-size:13px;"
+               onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='#fff'">
+            <b>${c.course_code}</b> - ${c.course_name}
+          </div>
+        `).join("");
+      }
+      suggestBox.style.display = "block";
     });
 
-    // Submit
+    // 点击输入框时，如果有字，就弹出来
+    searchInput.addEventListener("focus", () => {
+      if (searchInput.value.trim() && suggestBox.innerHTML.trim()) {
+        suggestBox.style.display = "block";
+      }
+    });
+
+    // 点击空白处关闭下拉
+    document.addEventListener("click", (e) => {
+      if (!searchInput.contains(e.target) && !suggestBox.contains(e.target)) {
+        suggestBox.style.display = "none";
+      }
+    });
+  }
+
+  // 表单提交
+  const form = document.getElementById("teacherForm");
+  if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const msg = document.getElementById("formMsg");
@@ -956,6 +1013,9 @@ async function initTeachersPage() {
       const ok = fields.every(f => validateTeacherField(f));
       if (!ok) return;
 
+      // 拼接选中的 Code
+      const subjectsStr = selectedTeacherCourses.map(c => c.code).join(", ");
+
       const payload = {
         full_name: document.getElementById("full_name").value.trim(),
         email: document.getElementById("email").value.trim(),
@@ -963,7 +1023,7 @@ async function initTeachersPage() {
         department: document.getElementById("department").value.trim(),
         max_weekly_hours: parseInt(document.getElementById("max_weekly_hours").value.trim(), 10),
         max_daily_hours: parseInt(document.getElementById("max_daily_hours").value.trim(), 10),
-        qualified_subjects: document.getElementById("qualified_subjects").value.trim() || null,
+        qualified_subjects: subjectsStr || null,
       };
 
       const url = editingTeacherId ? API + "/teachers/" + editingTeacherId : API + "/teachers";
@@ -971,47 +1031,34 @@ async function initTeachersPage() {
 
       const r = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + getToken(),
-        },
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
         body: JSON.stringify(payload),
       });
       const data = await r.json();
 
       if (!r.ok) {
-        const detail = data.detail || "Failed";
-        if (detail.toLowerCase().includes("email")) {
-          document.getElementById("emailMsg").textContent = detail;
-          document.getElementById("email").classList.add("input-error");
-        } else {
-          msg.style.color = "#dc2626";
-          msg.textContent = detail;
-        }
+        msg.style.color = "#dc2626";
+        msg.textContent = data.detail || "Failed";
         return;
       }
 
       msg.style.color = "#16a34a";
-      msg.textContent = editingTeacherId
-        ? "Faculty profile updated"
-        : "Faculty profile saved";
+      msg.textContent = editingTeacherId ? "Faculty updated" : "Faculty saved";
 
       editingTeacherId = null;
+      selectedTeacherCourses = [];
+      renderSelectedCourses();
       document.getElementById("formSubmitBtn").textContent = "Save Faculty";
       document.getElementById("formTitle").textContent = "Add Faculty";
       form.reset();
 
       fields.forEach(id => {
-        const m = document.getElementById(id + "Msg");
-        if (m) m.textContent = "";
-        const el = document.getElementById(id);
-        if (el) el.classList.remove("input-error");
+        const m = document.getElementById(id + "Msg"); if (m) m.textContent = "";
+        const el = document.getElementById(id); if (el) el.classList.remove("input-error");
       });
-
       loadTeachers();
     });
   }
-
   loadTeachers();
 }
 
@@ -1019,43 +1066,47 @@ async function loadTeachers() {
   const tbody = document.getElementById("teacherTable");
   if (!tbody) return;
 
-  const res = await fetch(API + "/teachers", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="8">Failed to load faculty</td></tr>`;
-    return;
-  }
+  const res = await fetch(API + "/teachers", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="8">Failed to load faculty</td></tr>`; return; }
   const teachers = await res.json();
 
-  if (teachers.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No faculty yet.</td></tr>`;
-    return;
-  }
+  if (teachers.length === 0) { tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No faculty yet.</td></tr>`; return; }
 
-  tbody.innerHTML = teachers.map(t => `
-    <tr>
-      <td><b>${t.full_name}</b></td>
-      <td>${t.email}</td>
-      <td>${t.academic_title || "-"}</td>
-      <td><span class="badge">${t.department}</span></td>
-      <td>${t.max_weekly_hours}</td>
-      <td>${t.max_daily_hours}</td>
-      <td>${t.qualified_subjects || "-"}</td>
-      ${isAdminTeacher ? `
-        <td>
-          <button class="btn-edit" onclick="editTeacher(${t.id})">Edit</button>
-          <button class="btn-del" onclick="deleteTeacher(${t.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
-    </tr>
-  `).join("");
+  tbody.innerHTML = teachers.map(t => {
+    // ★ 核心修改：把 "CSS 105, MAT 156" 变成多行显示
+    let subjectsHtml = "-";
+    if (t.qualified_subjects) {
+      const codes = t.qualified_subjects.split(",").map(s => s.trim()).filter(Boolean);
+      subjectsHtml = codes.map(code => {
+        // 去缓存里找对应的名字
+        const found = allCoursesForTeacher.find(c => c.course_code === code);
+        const name = found ? found.course_name : "Unknown";
+        return `<div style="font-size:12px; margin-bottom:2px;"><b>${code}</b> - ${name}</div>`;
+      }).join("");
+    }
+
+    return `
+      <tr>
+        <td><b>${t.full_name}</b></td>
+        <td>${t.email}</td>
+        <td>${t.academic_title || "-"}</td>
+        <td><span class="badge">${t.department}</span></td>
+        <td>${t.max_weekly_hours}</td>
+        <td>${t.max_daily_hours}</td>
+        <td>${subjectsHtml}</td> <!-- ★ 这里替换成了多行 HTML -->
+        ${isAdminTeacher ? `
+          <td>
+            <button class="btn-edit" onclick="editTeacher(${t.id})">Edit</button>
+            <button class="btn-del" onclick="deleteTeacher(${t.id})">Delete</button>
+          </td>
+        ` : `<td></td>`}
+      </tr>
+    `;
+  }).join("");
 }
 
 async function editTeacher(id) {
-  const res = await fetch(API + "/teachers", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await fetch(API + "/teachers", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const teachers = await res.json();
   const t = teachers.find(x => x.id === id);
@@ -1067,13 +1118,31 @@ async function editTeacher(id) {
   document.getElementById("department").value = t.department;
   document.getElementById("max_weekly_hours").value = t.max_weekly_hours;
   document.getElementById("max_daily_hours").value = t.max_daily_hours;
-  document.getElementById("qualified_subjects").value = t.qualified_subjects || "";
+
+  // 回填标签
+  selectedTeacherCourses = [];
+  if (t.qualified_subjects) {
+    // 如果数据库里存的是 "Foreign Language" 这种老数据，会显示 Unknown Course
+    const codes = t.qualified_subjects.split(",").map(s => s.trim());
+    codes.forEach(code => {
+      const found = allCoursesForTeacher.find(c => c.course_code === code);
+      if (found) {
+        selectedTeacherCourses.push({ code: found.course_code, name: found.course_name });
+      } else {
+        // 兼容以前的错误数据
+        selectedTeacherCourses.push({ code: code, name: "Legacy Subject" });
+      }
+    });
+  }
+  renderSelectedCourses();
 
   editingTeacherId = id;
   document.getElementById("formTitle").textContent = "Edit Faculty";
   document.getElementById("formSubmitBtn").textContent = "Update Faculty";
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+
 
 async function deleteTeacher(id) {
   const ok = await showConfirm(
