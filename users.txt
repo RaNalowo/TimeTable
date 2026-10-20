@@ -1,3 +1,5 @@
-admin@sdu.edu.kz|System Admin|Admin123!|admin|EMP001|
-240103101@sdu.edu.kz|Test Student|Student123!|student|STU001|
-teacher@sdu.edu.kz|Test Teacher|Teacher123!|teacher|EMP002|
+230103736@sdu.edu.kz  Student123!
+
+k.mamay@sdu.edu.kz  Teacher123!
+
+admin@sdu.edu.kz  Admin123!

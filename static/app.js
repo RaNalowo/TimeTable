@@ -21,7 +21,9 @@ async function apiFetch(url, options) {
     response = await fetch(url, options);
   } catch {
     const detail = "Cannot reach the server. Check that it is running, then retry.";
-    showRequestError(detail);
+    if (!String(url).endsWith("/auth/login")) {
+        showRequestError(detail);
+    }
     return new Response(JSON.stringify({ detail }), { status: 503, headers: { "Content-Type": "application/json" } });
   }
   if (response.ok) return response;
@@ -30,7 +32,9 @@ async function apiFetch(url, options) {
   let detail = payload.detail;
   if (Array.isArray(detail)) detail = detail.map(item => `${(item.loc || []).slice(1).join(".")}: ${item.msg}`).join("; ");
   if (typeof detail !== "string") detail = `Request failed (${response.status}). Please retry or check the server terminal.`;
-  showRequestError(detail);
+  if (!String(url).endsWith("/auth/login")) {
+        showRequestError(detail);
+    }
   if (response.status === 401 && !String(url).endsWith("/auth/login")) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
@@ -81,7 +85,6 @@ function initLoginPage() {
   const passwordMsg = document.getElementById("passwordMsg");
   const errorEl = document.getElementById("error");
 
-  // Clear per-field messages on input
   identifierEl.addEventListener("input", () => {
     identifierMsg.textContent = "";
     identifierEl.classList.remove("field-error");
@@ -96,7 +99,6 @@ function initLoginPage() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    // Reset messages
     identifierMsg.textContent = "";
     passwordMsg.textContent = "";
     errorEl.textContent = "";
@@ -106,7 +108,6 @@ function initLoginPage() {
     const identifier = identifierEl.value.trim();
     const password = passwordEl.value;
 
-    // ---------- Custom validation ----------
     let hasError = false;
 
     if (!identifier) {
@@ -125,9 +126,8 @@ function initLoginPage() {
       hasError = true;
     }
 
-    if (hasError) return;   // stop before sending request
+    if (hasError) return;
 
-    // ---------- Send login request ----------
     try {
       const res = await apiFetch(API + "/auth/login", {
         method: "POST",
@@ -149,121 +149,244 @@ function initLoginPage() {
   });
 }
 
-// ---------- Dashboard ----------
+let userFormDepts = [];
+
+function toggleUserRoleFields() {
+  const role = document.getElementById("newRole").value;
+
+  document.getElementById("studentFields").style.display = role === "student" ? "flex" : "none";
+  document.getElementById("emailField").style.display = role === "student" ? "none" : "block";
+}
+
+function onAddUserDeptChange() {
+  const dept = document.getElementById("newDepartment").value;
+  const progSel = document.getElementById("newProgram");
+  const trackSel = document.getElementById("newTrack");
+  progSel.innerHTML = `<option value="">-- Select program --</option>`;
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+  if (!dept) return;
+  const d = userFormDepts.find(x => x.name === dept);
+  if (d) progSel.innerHTML += d.programs.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+}
+
+function onAddUserProgChange() {
+  const progId = parseInt(document.getElementById("newProgram").value);
+  const trackSel = document.getElementById("newTrack");
+  trackSel.innerHTML = `<option value="">-- Select track --</option>`;
+  if (!progId) return;
+  apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + getToken() } })
+    .then(res => res.json())
+    .then(progs => {
+      const p = progs.find(x => x.id === progId);
+      if (p && p.tracks) p.tracks.split(",").forEach(t => trackSel.innerHTML += `<option value="${t.trim()}">${t.trim()}</option>`);
+    });
+}
+
+// 新增：表单校验工具函数
+function validateUserField(id) {
+  const el = document.getElementById(id);
+  const msg = document.getElementById(id + "Msg");
+  if (!el || !msg) return true;
+
+  const v = el.value.trim();
+  let err = "";
+
+  if (!v) {
+    err = "This field is required.";
+  }
+
+  msg.textContent = err;
+  if (err) { el.classList.add("input-error"); el.style.border = "1px solid #dc2626"; return false; }
+  el.classList.remove("input-error"); el.style.border = "1px solid #ccc";
+  return true;
+}
+
 async function initDashboard() {
-  const cardsEl = document.getElementById("cards");
-  if (!cardsEl) return;
+  const kpiGrid = document.getElementById("kpiGrid");
+  if (!kpiGrid) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const res = await apiFetch(API + "/dashboard/summary", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-
-  if (!res.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
-
+  const res = await apiFetch(API + "/dashboard/summary", { headers: { "Authorization": "Bearer " + token } });
+  if (!res.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const data = await res.json();
 
   document.getElementById("welcome").textContent = "Welcome, " + data.user.full_name;
-  document.getElementById("userInfo").textContent =
-    data.user.email + " · " + data.user.roles.join(", ");
+  document.getElementById("userInfo").textContent = data.user.email + " · " + data.user.roles.join(", ");
 
-  const c = data.cards;
-  cardsEl.innerHTML = `
-    <div class="card"><div class="label">Today's Classes</div><div class="value">${c.today_classes}</div></div>
-    <div class="card"><div class="label">Next Room</div><div class="value">${c.next_room}</div></div>
-    <div class="card"><div class="label">Pending Requests</div><div class="value">${c.pending_requests}</div></div>
-    <div class="card"><div class="label">Timetable Status</div><div class="value"><span class="badge">${c.timetable_status}</span></div></div>
+  const renderCard = (label, value, color = "#111827", subtext = "") => `
+    <div style="background:#fff; padding:20px; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid ${color};">
+      <div style="font-size:12px; color:#6b7280; text-transform:uppercase; font-weight:600; margin-bottom:8px;">${label}</div>
+      <div style="font-size:28px; font-weight:bold; color:${color};">${value}</div>
+      ${subtext ? `<div style="font-size:12px; color:#888; margin-top:4px;">${subtext}</div>` : ""}
+    </div>
   `;
 
   const panel = document.getElementById("rolePanel");
 
-  if (data.role === "student") {
-    const rows = data.student.today_schedule.map(x => `
-      <tr><td>${x.time}</td><td>${x.course}</td><td>${x.room}</td><td>${x.teacher}</td></tr>
-    `).join("");
-    const next = data.student.next_lecture;
+  // 👑 管理员看板
+  if (data.role === "admin") {
+    const a = data.admin;
+    kpiGrid.innerHTML = `
+      ${renderCard("Active Conflicts", a.active_conflicts, a.active_conflicts > 0 ? "#dc2626" : "#16a34a", a.active_conflicts > 0 ? "Needs Attention" : "Healthy")}
+      ${renderCard("Timetable Score", a.constraint_score + " / 100", "#2563eb")}
+      ${renderCard("Room Utilization", a.utilization + "%", "#f59e0b")}
+      ${renderCard("Total Courses", a.total_courses)}
+      ${renderCard("Total Teachers", a.total_teachers)}
+    `;
     panel.innerHTML = `
-      <h2>Student Schedule</h2>
-      <p>Next lecture: <b>${next.course}</b> at <b>${next.time}</b> in <b>${next.room}</b></p>
-      <table>
-        <thead><tr><th>Time</th><th>Course</th><th>Room</th><th>Teacher</th></tr></thead>
-        <tbody>${rows}</tbody>
+      <h2>System Status</h2>
+      <p style="font-size:16px;">Generation: <b>${a.generation_status}</b></p>
+      <p style="font-size:14px; color:#666;">Use the Admin Controls below to manage the scheduling lifecycle.</p>
+    `;
+    document.getElementById("adminPanel").style.display = "block";
+  }
+
+  // 👨‍🏫 老师看板
+  else if (data.role === "teacher") {
+    const t = data.teacher;
+    kpiGrid.innerHTML = `
+      ${renderCard("My Weekly Hours", t.weekly_hours, "#2563eb")}
+      ${renderCard("Classes Today", t.today_classes, "#16a34a")}
+      ${renderCard("Next Class Room", t.next_class.room, "#f59e0b")}
+    `;
+    const rows = t.weekly_schedule.map(x => `
+      <tr style="border-bottom:1px solid #eee;">
+        <td style="padding:10px;">${x.day}</td><td style="padding:10px;">${x.time}</td>
+        <td style="padding:10px;"><b>${x.course}</b></td><td style="padding:10px;">${x.room}</td><td style="padding:10px;">${x.group}</td>
+      </tr>
+    `).join("");
+    panel.innerHTML = `
+      <h2>My Weekly Schedule</h2>
+      <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:12px;">
+        <thead><tr style="background:#f9fafb; text-align:left;"><th style="padding:10px;">Day</th><th style="padding:10px;">Time</th><th style="padding:10px;">Course</th><th style="padding:10px;">Room</th><th style="padding:10px;">Group</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" style="padding:10px; color:#888;">No classes scheduled.</td></tr>'}</tbody>
       </table>
     `;
-  } else if (data.role === "teacher") {
-    const rows = data.teacher.weekly_schedule.map(x => `
-      <tr><td>${x.day}</td><td>${x.time}</td><td>${x.course}</td><td>${x.room}</td><td>${x.group}</td></tr>
+  }
+
+  // 👨‍🎓 学生看板
+  else {
+    const s = data.student;
+    kpiGrid.innerHTML = `
+      ${renderCard("Classes Today", s.today_classes, "#2563eb")}
+      ${renderCard("Next Course", s.next_class.course, "#16a34a", `At ${s.next_class.time}`)}
+      ${renderCard("Next Room", s.next_class.room, "#f59e0b")}
+    `;
+    const rows = s.today_schedule.map(x => `
+      <tr style="border-bottom:1px solid #eee;">
+        <td style="padding:10px;">${x.time}</td><td style="padding:10px;"><b>${x.course}</b></td>
+        <td style="padding:10px;">${x.room}</td><td style="padding:10px;">${x.teacher}</td>
+      </tr>
     `).join("");
     panel.innerHTML = `
-      <h2>Teacher Workload</h2>
-      <p>Weekly hours: <b>${data.teacher.weekly_hours}</b> ·
-         Rooms: <b>${data.teacher.rooms.join(", ")}</b> ·
-         Groups: <b>${data.teacher.groups.join(", ")}</b></p>
-      <table>
-        <thead><tr><th>Day</th><th>Time</th><th>Course</th><th>Room</th><th>Group</th></tr></thead>
-        <tbody>${rows}</tbody>
+      <h2>My Schedule Today</h2>
+      <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:12px;">
+        <thead><tr style="background:#f9fafb; text-align:left;"><th style="padding:10px;">Time</th><th style="padding:10px;">Course</th><th style="padding:10px;">Room</th><th style="padding:10px;">Teacher</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" style="padding:10px; color:#888;">No classes today!</td></tr>'}</tbody>
       </table>
-    `;
-  } else {
-    panel.innerHTML = `
-      <h2>Admin Scheduling Control</h2>
-      <p>Generation status: <b>${data.admin.generation_status}</b></p>
-      <p>Constraint score: <b>${data.admin.constraint_score}</b> / 100</p>
-      <p>Active conflicts: <b>${data.admin.active_conflicts}</b></p>
-      <p>Room utilization: <b>${data.admin.utilization}%</b></p>
     `;
   }
 
   if (data.role === "admin") {
     const adminPanel = document.getElementById("adminPanel");
-    adminPanel.style.display = "block";
+    if (adminPanel) adminPanel.style.display = "block";
+
+    try {
+      const deptRes = await apiFetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
+      if (deptRes.ok) {
+        userFormDepts = await deptRes.json();
+        const deptSel = document.getElementById("newDepartment");
+        if (deptSel) {
+          deptSel.innerHTML = `<option value="">-- Select department --</option>` +
+            userFormDepts.map(d => `<option value="${d.name}">${d.name}</option>`).join("");
+        }
+      }
+    } catch(e) { console.error(e); }
+
+    toggleUserRoleFields();
+
+    // 绑定实时校验
+    ["newFullName", "newEmail", "newEnrollmentYear", "newDepartment", "newProgram"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const evt = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(evt, () => {
+        validateUserField(id);
+        document.getElementById("addUserMsg").textContent = "";
+      });
+    });
 
     const form = document.getElementById("addUserForm");
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById("addUserMsg");
-      msg.textContent = "";
+    if (form) {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("addUserMsg");
+        msg.textContent = "";
+        msg.style.color = "initial";
 
-      const payload = {
-        email: document.getElementById("newEmail").value.trim(),
-        full_name: document.getElementById("newFullName").value.trim(),
-        password: document.getElementById("newPassword").value,
-        role: document.getElementById("newRole").value,
-        student_id: document.getElementById("newStudentId").value.trim() || null,
-        employee_id: document.getElementById("newEmployeeId").value.trim() || null,
-      };
+        const role = document.getElementById("newRole").value;
 
-      const r = await apiFetch(API + "/auth/admin/users", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + getToken(),
-        },
-        body: JSON.stringify(payload),
+        // ★ 核心：手动校验必填项
+        let okName = validateUserField("newFullName");
+        let okEmail = true, okYear = true, okDept = true, okProg = true;
+
+        if (role === "student") {
+          okYear = validateUserField("newEnrollmentYear");
+          okDept = validateUserField("newDepartment");
+          okProg = validateUserField("newProgram");
+        } else {
+          okEmail = validateUserField("newEmail");
+        }
+
+        if (!okName || !okEmail || !okYear || !okDept || !okProg) {
+          msg.style.color = "#dc2626";
+          msg.textContent = "Please fix the errors above.";
+          return;
+        }
+
+        const payload = {
+          role: role,
+          full_name: document.getElementById("newFullName").value.trim(),
+        };
+
+        if (role === "student") {
+          payload.enrollment_year = parseInt(document.getElementById("newEnrollmentYear").value);
+          payload.program_id = parseInt(document.getElementById("newProgram").value);
+          payload.track = document.getElementById("newTrack").value;
+        } else {
+          payload.email = document.getElementById("newEmail").value.trim();
+        }
+
+        const r = await apiFetch(API + "/auth/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify(payload),
+        });
+        const result = await r.json();
+
+        if (!r.ok) {
+          msg.style.color = "#dc2626";
+          msg.textContent = result.detail || "Failed to create user.";
+          return;
+        }
+
+        msg.style.color = "#16a34a";
+        if (role === "student") {
+          // ★ 新增：展示 Group
+          msg.innerHTML = `✅ Student created!<br>ID: <b>${result.user.student_id}</b><br>Email: <b>${result.user.email}</b><br>Password: <b>${result.user.default_password}</b><br>Assigned Group: <b>${result.user.group_code}</b>`;
+        } else {
+          msg.innerHTML = `✅ ${role} created!<br>Email: <b>${result.user.email}</b><br>Password: <b>${result.user.default_password}</b><br>Teacher profile auto-created.`;
+        }
+
+        form.reset();
+        toggleUserRoleFields();
       });
-      const result = await r.json();
-
-      if (!r.ok) {
-        msg.style.color = "#dc2626";
-        msg.textContent = result.detail || "Failed";
-        return;
-      }
-
-      msg.style.color = "#16a34a";
-      msg.textContent = "User created: " + result.user.email;
-      form.reset();
-    });
+    }
   }
 }
+
 
 // ---------- Admin: Load User List ----------
 async function loadAdminUsers() {
@@ -273,14 +396,9 @@ async function loadAdminUsers() {
   const res = await apiFetch(API + "/auth/admin/users", {
     headers: { "Authorization": "Bearer " + getToken() },
   });
-  if (!res.ok) {
-    box.textContent = "Access denied";
-    return;
-  }
+  if (!res.ok) { box.textContent = "Access denied"; return; }
   const users = await res.json();
-  box.innerHTML = users.map(u =>
-    `<li>${u.email} — ${u.full_name} (${u.roles.join(", ")})</li>`
-  ).join("");
+  box.innerHTML = users.map(u => `<li>${u.email} — ${u.full_name} (${u.roles.join(", ")})</li>`).join("");
 }
 
 // ---------- Placeholder Navigation ----------
@@ -299,11 +417,9 @@ function highlightField(id) {
 // ============================================================
 // Manage Campus Rooms
 // ============================================================
-
 let editingRoomId = null;
 let isAdmin = false;
 
-// ---------- Room field validators ----------
 function validateRoomField(fieldId) {
   const el = document.getElementById(fieldId);
   const msg = document.getElementById(fieldId + "Msg");
@@ -329,8 +445,200 @@ function validateRoomField(fieldId) {
   return true;
 }
 
+async function initRoomsPage() {
+  const table = document.getElementById("roomTable");
+  if (!table) return;
 
-// ---------- Teacher field validators ----------
+  const token = getToken();
+  if (!token) { window.location.href = "/login.html"; return; }
+
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
+  const me = await meRes.json();
+  isAdmin = me.roles.includes("admin");
+
+  const typesRes = await apiFetch(API + "/rooms/types");
+  const types = await typesRes.json();
+  const typeSelect = document.getElementById("room_type");
+  if (typeSelect) typeSelect.innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join("");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (isAdmin) {
+    if (formPanel) formPanel.style.display = "block";
+    if (accessMsg) accessMsg.textContent = "";
+  } else {
+    if (formPanel) formPanel.style.display = "none";
+    if (actionCol) actionCol.style.display = "none";
+    if (accessMsg) accessMsg.textContent = "You have read-only access.";
+  }
+
+  const form = document.getElementById("roomForm");
+  if (form) {
+    ["building", "room_code", "capacity", "room_type"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", () => { validateRoomField(id); const fm = document.getElementById("formMsg"); if (fm) fm.textContent = ""; });
+      el.addEventListener("change", () => validateRoomField(id));
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("formMsg");
+      msg.textContent = "";
+
+      const okB = validateRoomField("building");
+      const okC = validateRoomField("room_code");
+      const okCap = validateRoomField("capacity");
+      const okT = validateRoomField("room_type");
+      if (!okB || !okC || !okCap || !okT) return;
+
+      const payload = {
+        campus: document.getElementById("campus").value.trim() || null,
+        building: document.getElementById("building").value.trim(),
+        room_code: document.getElementById("room_code").value.trim(),
+        capacity: parseInt(document.getElementById("capacity").value.trim(), 10),
+        room_type: document.getElementById("room_type").value,
+        equipment: document.getElementById("equipment").value.trim() || null,
+      };
+
+      const url = editingRoomId ? API + "/rooms/" + editingRoomId : API + "/rooms";
+      const method = editingRoomId ? "PUT" : "POST";
+
+      const r = await apiFetch(url, {
+        method, headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+
+      if (!r.ok) {
+        const detail = data.detail || "Failed";
+        if (detail.toLowerCase().includes("already exists")) {
+          document.getElementById("room_codeMsg").textContent = detail;
+          document.getElementById("room_code").classList.add("input-error");
+        } else {
+          msg.style.color = "#dc2626"; msg.textContent = detail;
+        }
+        return;
+      }
+
+      msg.style.color = "#16a34a";
+      msg.textContent = editingRoomId ? "Room updated successfully" : `Room ${data.room_code} added successfully`;
+
+      editingRoomId = null;
+      document.getElementById("formSubmitBtn").textContent = "Save Room";
+      document.getElementById("formTitle").textContent = "Add Room";
+      form.reset();
+      ["building", "room_code", "capacity", "room_type"].forEach(id => {
+        const m = document.getElementById(id + "Msg"); if (m) m.textContent = "";
+        const el = document.getElementById(id); if (el) el.classList.remove("input-error");
+      });
+      loadRooms();
+    });
+  }
+  loadRooms();
+}
+
+async function loadRooms() {
+  const tbody = document.getElementById("roomTable");
+  if (!tbody) return;
+
+  const res = await apiFetch(API + "/rooms", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="7">Failed to load rooms</td></tr>`; return; }
+  const rooms = await res.json();
+
+  if (rooms.length === 0) { tbody.innerHTML = `<tr><td colspan="7" style="color:#888;">No rooms yet.</td></tr>`; return; }
+
+  tbody.innerHTML = rooms.map(r => `
+    <tr>
+      <td>${r.campus || "-"}</td>
+      <td>${r.building}</td>
+      <td><b>${r.room_code}</b></td>
+      <td>${r.capacity}</td>
+      <td><span class="badge">${r.room_type}</span></td>
+      <td>${r.equipment || "-"}</td>
+      ${isAdmin ? `<td><button class="btn-edit" onclick="editRoom(${r.id})">Edit</button><button class="btn-del" onclick="deleteRoom(${r.id})">Delete</button></td>` : `<td></td>`}
+    </tr>
+  `).join("");
+}
+
+async function editRoom(id) {
+  const res = await apiFetch(API + "/rooms", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) return;
+  const rooms = await res.json();
+  const room = rooms.find(r => r.id === id);
+  if (!room) return;
+
+  document.getElementById("campus").value = room.campus || "";
+  document.getElementById("building").value = room.building;
+  document.getElementById("room_code").value = room.room_code;
+  document.getElementById("capacity").value = room.capacity;
+  document.getElementById("room_type").value = room.room_type;
+  document.getElementById("equipment").value = room.equipment || "";
+
+  editingRoomId = id;
+  document.getElementById("formTitle").textContent = "Edit Room";
+  document.getElementById("formSubmitBtn").textContent = "Update Room";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteRoom(id) {
+  const ok = await showConfirm("Delete Room", "Are you sure you want to delete this room? This cannot be undone.");
+  if (!ok) return;
+
+  const res = await apiFetch(API + "/rooms/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
+  const data = await res.json();
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
+  showNotice("Room deleted", "success");
+  loadRooms();
+}
+
+function filterRooms() {
+  const el = document.getElementById("roomFilter");
+  if (!el) return;
+  const q = el.value.toLowerCase();
+  document.querySelectorAll("#roomTable tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+// ============================================================
+// Manage Faculty Profiles (Merged Tag Input)
+// ============================================================
+let editingTeacherId = null;
+let isAdminTeacher = false;
+let allCoursesForTeacher = [];
+let selectedTeacherCourses = [];
+
+function renderSelectedCourses() {
+  const container = document.getElementById("selectedCoursesContainer");
+  if (!container) return;
+
+  container.innerHTML = selectedTeacherCourses.map(c => `
+    <div class="tag" style="display:inline-flex; align-items:center; background:#e0e7ff; color:#3730a3; padding:4px 10px; border-radius:16px; font-size:13px; font-weight:600; border:1px solid #c7d2fe;">
+      ${c.code} - ${c.name}
+      <span class="tag-close" onclick="removeCourseTag('${c.code}')" style="margin-left:8px; cursor:pointer; font-size:16px; line-height:1; color:#dc2626;">&times;</span>
+    </div>
+  `).join("");
+}
+
+function removeCourseTag(code) {
+  selectedTeacherCourses = selectedTeacherCourses.filter(c => c.code !== code);
+  renderSelectedCourses();
+}
+
+function addCourseTag(code, name) {
+  selectedTeacherCourses.push({ code, name });
+  renderSelectedCourses();
+
+  const input = document.getElementById("courseSearchInput");
+  if (input) input.value = "";
+  const suggest = document.getElementById("courseSuggestions");
+  if (suggest) suggest.style.display = "none";
+}
+
 function validateTeacherField(fieldId) {
   const el = document.getElementById(fieldId);
   const msg = document.getElementById(fieldId + "Msg");
@@ -366,6 +674,247 @@ function validateTeacherField(fieldId) {
   return true;
 }
 
+async function initTeachersPage() {
+  const table = document.getElementById("teacherTable");
+  if (!table) return;
+
+  const token = getToken();
+  if (!token) { window.location.href = "/login.html"; return; }
+
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
+  const me = await meRes.json();
+  isAdminTeacher = me.roles.includes("admin");
+
+  const formPanel = document.getElementById("formPanel");
+  const accessMsg = document.getElementById("accessMsg");
+  const actionCol = document.getElementById("actionCol");
+
+  if (isAdminTeacher) {
+    if (formPanel) formPanel.style.display = "block";
+    if (accessMsg) accessMsg.textContent = "";
+  } else {
+    if (formPanel) formPanel.style.display = "none";
+    if (actionCol) actionCol.style.display = "none";
+    if (accessMsg) accessMsg.textContent = "You have read-only access.";
+  }
+
+  try {
+    const courseRes = await apiFetch(API + "/courses", { headers: { "Authorization": "Bearer " + token } });
+    if (courseRes.ok) allCoursesForTeacher = await courseRes.json();
+  } catch (e) { console.error(e); }
+
+  const searchInput = document.getElementById("courseSearchInput");
+  const suggestBox = document.getElementById("courseSuggestions");
+
+  if (searchInput && suggestBox) {
+    searchInput.addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      if (!q) { suggestBox.style.display = "none"; return; }
+
+      const matches = allCoursesForTeacher.filter(c =>
+        !selectedTeacherCourses.some(sc => sc.code === c.course_code) &&
+        (c.course_code.toLowerCase().includes(q) || c.course_name.toLowerCase().includes(q))
+      );
+
+      if (matches.length === 0) {
+        suggestBox.innerHTML = `<div style="padding:10px; color:#888; font-size:13px;">No courses found</div>`;
+      } else {
+        suggestBox.innerHTML = matches.slice(0, 15).map(c => `
+          <div onclick="addCourseTag('${c.course_code}', '${c.course_name.replace(/'/g, "\\'")}')"
+               style="padding:10px; cursor:pointer; border-bottom:1px solid #eee; font-size:13px;"
+               onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='#fff'">
+            <b>${c.course_code}</b> - ${c.course_name}
+          </div>
+        `).join("");
+      }
+      suggestBox.style.display = "block";
+    });
+
+    searchInput.addEventListener("focus", () => {
+      if (searchInput.value.trim() && suggestBox.innerHTML.trim()) suggestBox.style.display = "block";
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!searchInput.contains(e.target) && !suggestBox.contains(e.target)) {
+        suggestBox.style.display = "none";
+      }
+    });
+  }
+
+  const form = document.getElementById("teacherForm");
+  if (form) {
+    ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const evt = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(evt, () => {
+        validateTeacherField(id);
+        const fm = document.getElementById("formMsg");
+        if (fm) fm.textContent = "";
+      });
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("formMsg");
+      msg.textContent = "";
+
+      const fields = ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"];
+      let hasErr = false;
+      fields.forEach(f => { if (!validateTeacherField(f)) hasErr = true; });
+      if (hasErr) return;
+
+      const subjectsStr = selectedTeacherCourses.map(c => c.code).join(", ");
+
+      const payload = {
+        full_name: document.getElementById("full_name").value.trim(),
+        email: document.getElementById("email").value.trim(),
+        academic_title: document.getElementById("academic_title").value.trim() || null,
+        department: document.getElementById("department").value.trim(),
+        max_weekly_hours: parseInt(document.getElementById("max_weekly_hours").value.trim(), 10),
+        max_daily_hours: parseInt(document.getElementById("max_daily_hours").value.trim(), 10),
+        qualified_subjects: subjectsStr || null,
+      };
+
+      const url = editingTeacherId ? API + "/teachers/" + editingTeacherId : API + "/teachers";
+      const method = editingTeacherId ? "PUT" : "POST";
+
+      try {
+        const r = await apiFetch(url, {
+          method,
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+
+        if (!r.ok) {
+          msg.style.color = "#dc2626";
+          msg.textContent = data.detail || "Failed";
+          return;
+        }
+
+        msg.style.color = "#16a34a";
+        msg.textContent = editingTeacherId ? "Faculty updated" : "Faculty saved";
+
+        editingTeacherId = null;
+        selectedTeacherCourses = [];
+        renderSelectedCourses();
+        document.getElementById("formSubmitBtn").textContent = "Save Faculty";
+        document.getElementById("formTitle").textContent = "Add Faculty";
+        form.reset();
+
+        fields.forEach(id => {
+          const m = document.getElementById(id + "Msg"); if (m) m.textContent = "";
+          const el = document.getElementById(id); if (el) el.classList.remove("input-error");
+        });
+
+        loadTeachers();
+      } catch (err) {
+        msg.style.color = "#dc2626";
+        msg.textContent = "Network error occurred.";
+      }
+    });
+  }
+  loadTeachers();
+}
+
+async function loadTeachers() {
+  const tbody = document.getElementById("teacherTable");
+  if (!tbody) return;
+
+  const res = await apiFetch(API + "/teachers", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="8">Failed to load faculty</td></tr>`; return; }
+  const teachers = await res.json();
+
+  if (teachers.length === 0) { tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No faculty yet.</td></tr>`; return; }
+
+  tbody.innerHTML = teachers.map(t => {
+    // 把 "CSS 105, MAT 156" 变成多行显示
+    let subjectsHtml = "-";
+    if (t.qualified_subjects) {
+      const codes = t.qualified_subjects.split(",").map(s => s.trim()).filter(Boolean);
+      subjectsHtml = codes.map(code => {
+        const found = allCoursesForTeacher.find(c => c.course_code === code);
+        const name = found ? found.course_name : "Unknown";
+        return `<div style="font-size:12px; margin-bottom:2px;"><b>${escapeHTML(code)}</b> - ${escapeHTML(name)}</div>`;
+      }).join("");
+    }
+
+    return `
+      <tr>
+        <td><b>${escapeHTML(t.full_name)}</b></td>
+        <td>${escapeHTML(t.email)}</td>
+        <td>${escapeHTML(t.academic_title || "-")}</td>
+        <td><span class="badge">${escapeHTML(t.department)}</span></td>
+        <td>${t.max_weekly_hours}</td>
+        <td>${t.max_daily_hours}</td>
+        <td>${subjectsHtml}</td>
+        ${isAdminTeacher ? `
+          <td>
+            <button class="btn-edit" onclick="editTeacher(${t.id})">Edit</button>
+            <button class="btn-del" onclick="deleteTeacher(${t.id})">Delete</button>
+          </td>
+        ` : `<td></td>`}
+      </tr>
+    `;
+  }).join("");
+}
+
+async function editTeacher(id) {
+  const res = await apiFetch(API + "/teachers", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) return;
+  const teachers = await res.json();
+  const t = teachers.find(x => x.id === id);
+  if (!t) return;
+
+  document.getElementById("full_name").value = t.full_name;
+  document.getElementById("email").value = t.email;
+  document.getElementById("academic_title").value = t.academic_title || "";
+  document.getElementById("department").value = t.department;
+  document.getElementById("max_weekly_hours").value = t.max_weekly_hours;
+  document.getElementById("max_daily_hours").value = t.max_daily_hours;
+
+  // 回填标签
+  selectedTeacherCourses = [];
+  if (t.qualified_subjects) {
+    const codes = t.qualified_subjects.split(",").map(s => s.trim());
+    codes.forEach(code => {
+      const found = allCoursesForTeacher.find(c => c.course_code === code);
+      if (found) {
+        selectedTeacherCourses.push({ code: found.course_code, name: found.course_name });
+      } else {
+        selectedTeacherCourses.push({ code: code, name: "Legacy Subject" });
+      }
+    });
+  }
+  renderSelectedCourses();
+
+  editingTeacherId = id;
+  document.getElementById("formTitle").textContent = "Edit Faculty";
+  document.getElementById("formSubmitBtn").textContent = "Update Faculty";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteTeacher(id) {
+  const ok = await showConfirm("Delete Faculty Profile", "Are you sure you want to delete this faculty profile? This cannot be undone.");
+  if (!ok) return;
+
+  const res = await apiFetch(API + "/teachers/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
+  const data = await res.json();
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
+  showNotice("Faculty deleted", "success");
+  loadTeachers();
+}
+
+function filterTeachers() {
+  const el = document.getElementById("teacherFilter");
+  if (!el) return;
+  const q = el.value.toLowerCase();
+  document.querySelectorAll("#teacherTable tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+}
 
 // ============================================================
 // Manage Course Curriculum
@@ -493,14 +1042,12 @@ async function initCoursesPage() {
     if (accessMsg) accessMsg.textContent = "You have read-only access.";
   }
 
-  // 加载 Departments 并获取嵌套的 Programs（复用之前的接口）
   try {
     const deptRes = await apiFetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       courseDeptCache = await deptRes.json();
     }
 
-    // 填充 Filter 下拉框
     const filterSel = document.getElementById("filterProgram");
     if (filterSel) {
       const uniqueProgs = new Map();
@@ -532,7 +1079,6 @@ async function initCoursesPage() {
       msg.textContent = "";
 
       const fields = ["course_code", "course_name", "department", "program_id", "credits", "total_hours", "lecture_hours", "practice_hours", "lab_hours"];
-      // ★ 全局校验：遍历所有字段，哪怕前面错了也要全标红
       let hasError = false;
       fields.forEach(f => {
         if (!validateCourseField(f)) hasError = true;
@@ -589,8 +1135,8 @@ async function initCoursesPage() {
       document.getElementById("formSubmitBtn").textContent = "Save Course";
       document.getElementById("formTitle").textContent = "Add Course";
       form.reset();
-      onCourseDeptChange(); // 重置联动
-      onElectiveChange();   // 重置禁用状态
+      onCourseDeptChange();
+      onElectiveChange();
 
       fields.forEach(id => {
         const m = document.getElementById(id + "Msg");
@@ -626,11 +1172,9 @@ function applyCourseFilters() {
 
   let filtered = allCoursesCache;
 
-  // 过滤 1：Program
   if (filterProg !== "all") {
     filtered = filtered.filter(c => c.program_name === filterProg);
   }
-  // 过滤 2：文字搜索
   if (searchQ) {
     filtered = filtered.filter(c =>
       c.course_code.toLowerCase().includes(searchQ) ||
@@ -652,15 +1196,15 @@ function applyCourseFilters() {
 
     return `
       <tr>
-        <td><b>${c.course_code}</b></td>
-        <td>${c.course_name}</td>
-        <td><span class="badge">${c.program_name || "-"}</span></td>
+        <td><b>${escapeHTML(c.course_code)}</b></td>
+        <td>${escapeHTML(c.course_name)}</td>
+        <td><span class="badge">${escapeHTML(c.program_name || "-")}</span></td>
         <td>${c.credits} ECTS</td>
-        <td>${c.semester_level || "-"}</td>
-        <td><span class="split">${split}</span></td>
+        <td>${escapeHTML(c.semester_level || "-")}</td>
+        <td><span class="split">${escapeHTML(split)}</span></td>
         <td>${typeBadge}</td>
         <td>${trackBadge}</td>
-        <td>${c.department ? `<span class="badge">${c.department}</span>` : "-"}</td>
+        <td>${c.department ? `<span class="badge">${escapeHTML(c.department)}</span>` : "-"}</td>
         ${isAdminCourse ? `
           <td>
             <button class="btn-edit" onclick="editCourse(${c.id})">Edit</button>
@@ -673,11 +1217,9 @@ function applyCourseFilters() {
 }
 
 async function editCourse(id) {
-  // 从缓存中找
   const c = allCoursesCache.find(x => x.id === id);
   if (!c) return;
 
-  // 1. 先联动 Department
   let targetDept = "";
   courseDeptCache.forEach(d => {
     if (d.programs.some(p => p.id === c.program_id)) {
@@ -685,12 +1227,10 @@ async function editCourse(id) {
     }
   });
   document.getElementById("department").value = targetDept || "";
-  onCourseDeptChange(); // 触发加载 Programs
+  onCourseDeptChange();
 
-  // 2. 填 Program
   document.getElementById("program_id").value = c.program_id || "";
 
-  // 3. 填其他
   document.getElementById("course_code").value = c.course_code;
   document.getElementById("course_name").value = c.course_name;
   document.getElementById("credits").value = c.credits;
@@ -701,7 +1241,7 @@ async function editCourse(id) {
   document.getElementById("lab_hours").value = c.lab_hours;
   document.getElementById("is_elective").checked = c.is_elective;
 
-  onElectiveChange(); // 触发 Track 可用状态
+  onElectiveChange();
   document.getElementById("track").value = c.track || "";
 
   editingCourseId = id;
@@ -724,440 +1264,15 @@ function filterCourses() {
   applyCourseFilters();
 }
 
-async function initRoomsPage() {
-  const table = document.getElementById("roomTable");
-  if (!table) return;
-
-  const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
-
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
-  const me = await meRes.json();
-  isAdmin = me.roles.includes("admin");
-
-  const typesRes = await apiFetch(API + "/rooms/types");
-  const types = await typesRes.json();
-  const typeSelect = document.getElementById("room_type");
-  if (typeSelect) {
-    typeSelect.innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join("");
-  }
-
-  const formPanel = document.getElementById("formPanel");
-  const accessMsg = document.getElementById("accessMsg");
-  const actionCol = document.getElementById("actionCol");
-
-  if (isAdmin) {
-    if (formPanel) formPanel.style.display = "block";
-    if (accessMsg) accessMsg.textContent = "";
-  } else {
-    if (formPanel) formPanel.style.display = "none";
-    if (actionCol) actionCol.style.display = "none";
-    if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify rooms.";
-  }
-
-  const form = document.getElementById("roomForm");
-  if (form) {
-    // ★★★ 新增：实时验证 ★★★
-    ["building", "room_code", "capacity", "room_type"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener("input", () => {
-        validateRoomField(id);
-        const fm = document.getElementById("formMsg");
-        if (fm) fm.textContent = "";
-      });
-      el.addEventListener("change", () => validateRoomField(id));
-    });
-
-    // ---------- 提交 ----------
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById("formMsg");
-      msg.textContent = "";
-
-      const okB = validateRoomField("building");
-      const okC = validateRoomField("room_code");
-      const okCap = validateRoomField("capacity");
-      const okT = validateRoomField("room_type");
-      if (!okB || !okC || !okCap || !okT) return;
-
-      const payload = {
-        campus: document.getElementById("campus").value.trim() || null,
-        building: document.getElementById("building").value.trim(),
-        room_code: document.getElementById("room_code").value.trim(),
-        capacity: parseInt(document.getElementById("capacity").value.trim(), 10),
-        room_type: document.getElementById("room_type").value,
-        equipment: document.getElementById("equipment").value.trim() || null,
-      };
-
-      const url = editingRoomId ? API + "/rooms/" + editingRoomId : API + "/rooms";
-      const method = editingRoomId ? "PUT" : "POST";
-
-      const r = await apiFetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + getToken(),
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json();
-
-      if (!r.ok) {
-        const detail = data.detail || "Failed";
-        if (detail.toLowerCase().includes("already exists")) {
-          document.getElementById("room_codeMsg").textContent = detail;
-          document.getElementById("room_code").classList.add("input-error");
-        } else {
-          msg.style.color = "#dc2626";
-          msg.textContent = detail;
-        }
-        return;
-      }
-
-      msg.style.color = "#16a34a";
-      msg.textContent = editingRoomId
-        ? "Room updated successfully"
-        : `Room ${data.room_code} added successfully`;
-
-      editingRoomId = null;
-      document.getElementById("formSubmitBtn").textContent = "Save Room";
-      document.getElementById("formTitle").textContent = "Add Room";
-      form.reset();
-      ["building", "room_code", "capacity", "room_type"].forEach(id => {
-        const m = document.getElementById(id + "Msg");
-        if (m) m.textContent = "";
-        const el = document.getElementById(id);
-        if (el) el.classList.remove("input-error");
-      });
-      loadRooms();
-    });
-  }
-
-  loadRooms();
-}
-
-async function loadRooms() {
-  const tbody = document.getElementById("roomTable");
-  if (!tbody) return;
-
-  const res = await apiFetch(API + "/rooms", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="7">Failed to load rooms</td></tr>`;
-    return;
-  }
-  const rooms = await res.json();
-
-  if (rooms.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#888;">No rooms yet.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = rooms.map(r => `
-    <tr>
-      <td>${r.campus || "-"}</td>
-      <td>${r.building}</td>
-      <td><b>${r.room_code}</b></td>
-      <td>${r.capacity}</td>
-      <td><span class="badge">${r.room_type}</span></td>
-      <td>${r.equipment || "-"}</td>
-      ${isAdmin ? `
-        <td>
-          <button class="btn-edit" onclick="editRoom(${r.id})">Edit</button>
-          <button class="btn-del" onclick="deleteRoom(${r.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
-    </tr>
-  `).join("");
-}
-
-async function editRoom(id) {
-  const res = await apiFetch(API + "/rooms", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) return;
-  const rooms = await res.json();
-  const room = rooms.find(r => r.id === id);
-  if (!room) return;
-
-  document.getElementById("campus").value = room.campus || "";
-  document.getElementById("building").value = room.building;
-  document.getElementById("room_code").value = room.room_code;
-  document.getElementById("capacity").value = room.capacity;
-  document.getElementById("room_type").value = room.room_type;
-  document.getElementById("equipment").value = room.equipment || "";
-
-  editingRoomId = id;
-  document.getElementById("formTitle").textContent = "Edit Room";
-  document.getElementById("formSubmitBtn").textContent = "Update Room";
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function deleteRoom(id) {
-  const ok = await showConfirm(
-    "Delete Room",
-    "Are you sure you want to delete this room? This cannot be undone."
-  );
-  if (!ok) return;
-
-  const res = await apiFetch(API + "/rooms/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
-  showNotice("Room deleted", "success");
-  loadRooms();
-}
-
-function filterRooms() {
-  const el = document.getElementById("roomFilter");
-  if (!el) return;
-  const q = el.value.toLowerCase();
-  document.querySelectorAll("#roomTable tr").forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
-  });
-}
-
 // ============================================================
-// Manage Faculty Profiles
+// Teacher Availability Preference
 // ============================================================
-
-let editingTeacherId = null;
-let isAdminTeacher = false;
-
-async function initTeachersPage() {
-  const table = document.getElementById("teacherTable");
-  if (!table) return;
-
-  const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
-
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
-  const me = await meRes.json();
-  isAdminTeacher = me.roles.includes("admin");
-
-  const formPanel = document.getElementById("formPanel");
-  const accessMsg = document.getElementById("accessMsg");
-  const actionCol = document.getElementById("actionCol");
-
-  if (isAdminTeacher) {
-    if (formPanel) formPanel.style.display = "block";
-    if (accessMsg) accessMsg.textContent = "";
-  } else {
-    if (formPanel) formPanel.style.display = "none";
-    if (actionCol) actionCol.style.display = "none";
-    if (accessMsg) accessMsg.textContent = "You have read-only access. Only admins can modify faculty profiles.";
-  }
-
-  const form = document.getElementById("teacherForm");
-  if (form) {
-    // Real-time validation
-    ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const evt = el.tagName === "SELECT" ? "change" : "input";
-      el.addEventListener(evt, () => {
-        validateTeacherField(id);
-        const fm = document.getElementById("formMsg");
-        if (fm) fm.textContent = "";
-      });
-    });
-
-    // Submit
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById("formMsg");
-      msg.textContent = "";
-
-      const fields = ["full_name", "email", "department", "max_weekly_hours", "max_daily_hours"];
-      const ok = fields.every(f => validateTeacherField(f));
-      if (!ok) return;
-
-      const payload = {
-        full_name: document.getElementById("full_name").value.trim(),
-        email: document.getElementById("email").value.trim(),
-        academic_title: document.getElementById("academic_title").value.trim() || null,
-        department: document.getElementById("department").value.trim(),
-        max_weekly_hours: parseInt(document.getElementById("max_weekly_hours").value.trim(), 10),
-        max_daily_hours: parseInt(document.getElementById("max_daily_hours").value.trim(), 10),
-        qualified_subjects: document.getElementById("qualified_subjects").value.trim() || null,
-      };
-
-      const url = editingTeacherId ? API + "/teachers/" + editingTeacherId : API + "/teachers";
-      const method = editingTeacherId ? "PUT" : "POST";
-
-      const r = await apiFetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + getToken(),
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json();
-
-      if (!r.ok) {
-        const detail = data.detail || "Failed";
-        if (detail.toLowerCase().includes("email")) {
-          document.getElementById("emailMsg").textContent = detail;
-          document.getElementById("email").classList.add("input-error");
-        } else {
-          msg.style.color = "#dc2626";
-          msg.textContent = detail;
-        }
-        return;
-      }
-
-      msg.style.color = "#16a34a";
-      msg.textContent = editingTeacherId
-        ? "Faculty profile updated"
-        : "Faculty profile saved";
-
-      editingTeacherId = null;
-      document.getElementById("formSubmitBtn").textContent = "Save Faculty";
-      document.getElementById("formTitle").textContent = "Add Faculty";
-      form.reset();
-
-      fields.forEach(id => {
-        const m = document.getElementById(id + "Msg");
-        if (m) m.textContent = "";
-        const el = document.getElementById(id);
-        if (el) el.classList.remove("input-error");
-      });
-
-      loadTeachers();
-    });
-  }
-
-  loadTeachers();
-}
-
-async function loadTeachers() {
-  const tbody = document.getElementById("teacherTable");
-  if (!tbody) return;
-
-  const res = await apiFetch(API + "/teachers", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="8">Failed to load faculty</td></tr>`;
-    return;
-  }
-  const teachers = await res.json();
-
-  if (teachers.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No faculty yet.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = teachers.map(t => `
-    <tr>
-      <td><b>${t.full_name}</b></td>
-      <td>${t.email}</td>
-      <td>${t.academic_title || "-"}</td>
-      <td><span class="badge">${t.department}</span></td>
-      <td>${t.max_weekly_hours}</td>
-      <td>${t.max_daily_hours}</td>
-      <td>${t.qualified_subjects || "-"}</td>
-      ${isAdminTeacher ? `
-        <td>
-          <button class="btn-edit" onclick="editTeacher(${t.id})">Edit</button>
-          <button class="btn-del" onclick="deleteTeacher(${t.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
-    </tr>
-  `).join("");
-}
-
-async function editTeacher(id) {
-  const res = await apiFetch(API + "/teachers", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) return;
-  const teachers = await res.json();
-  const t = teachers.find(x => x.id === id);
-  if (!t) return;
-
-  document.getElementById("full_name").value = t.full_name;
-  document.getElementById("email").value = t.email;
-  document.getElementById("academic_title").value = t.academic_title || "";
-  document.getElementById("department").value = t.department;
-  document.getElementById("max_weekly_hours").value = t.max_weekly_hours;
-  document.getElementById("max_daily_hours").value = t.max_daily_hours;
-  document.getElementById("qualified_subjects").value = t.qualified_subjects || "";
-
-  editingTeacherId = id;
-  document.getElementById("formTitle").textContent = "Edit Faculty";
-  document.getElementById("formSubmitBtn").textContent = "Update Faculty";
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function deleteTeacher(id) {
-  const ok = await showConfirm(
-    "Delete Faculty Profile",
-    "Are you sure you want to delete this faculty profile? This cannot be undone."
-  );
-  if (!ok) return;
-
-  const res = await apiFetch(API + "/teachers/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
-  showNotice("Faculty deleted", "success");
-  loadTeachers();
-}
-
-function filterTeachers() {
-  const el = document.getElementById("teacherFilter");
-  if (!el) return;
-  const q = el.value.toLowerCase();
-  document.querySelectorAll("#teacherTable tr").forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
-  });
-}
-
-// ============================================================
-// Teacher Availability Preference (User Story 6)
-// ============================================================
-
 let availConfig = { days: [], time_slots: [], slot_hours: 1.5 };
 let availMatrix = {};
 let availFrozen = false;
 let availMaxHours = 20;
 let availIsAdmin = false;
 let availIsTeacher = false;
-
 const AVAIL_CYCLE = ["preferred", "neutral", "blocked"];
 
 async function initAvailabilityPage() {
@@ -1165,32 +1280,19 @@ async function initAvailabilityPage() {
   if (!grid || !document.getElementById("teacherSelect")) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   availIsAdmin = me.roles.includes("admin");
   availIsTeacher = me.roles.includes("teacher");
 
-  const cfgRes = await apiFetch(API + "/availability/config", {
-    headers: { "Authorization": "Bearer " + token },
-  });
+  const cfgRes = await apiFetch(API + "/availability/config", { headers: { "Authorization": "Bearer " + token } });
   if (!cfgRes.ok) return;
   availConfig = await cfgRes.json();
 
-  const myRes = await apiFetch(API + "/availability/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
+  const myRes = await apiFetch(API + "/availability/me", { headers: { "Authorization": "Bearer " + token } });
   if (!myRes.ok) return;
   const myData = await myRes.json();
   availMatrix = myData.matrix;
@@ -1212,7 +1314,6 @@ async function initAvailabilityPage() {
   updateStats();
 }
 
-// RENAMED to avoid clash with User Story 10's renderGrid()
 function renderAvailabilityGrid() {
   const grid = document.getElementById("gridTable");
   const { days, time_slots } = availConfig;
@@ -1294,10 +1395,7 @@ async function saveAvailability() {
 
   const res = await apiFetch(API + "/availability/me", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify({ matrix: availMatrix }),
   });
   const data = await res.json();
@@ -1324,7 +1422,6 @@ function resetMatrix() {
   updateStats();
 }
 
-// ---------- Admin ----------
 function updateFreezeUI() {
   const el = document.getElementById("freezeStatus");
   el.textContent = availFrozen ? "FROZEN (read-only)" : "Open";
@@ -1332,24 +1429,16 @@ function updateFreezeUI() {
 }
 
 async function toggleFreeze() {
-  const res = await apiFetch(API + "/availability/freeze", {
-    method: "POST",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/availability/freeze", { method: "POST", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Failed");
-    return;
-  }
+  if (!res.ok) { alert(data.detail || "Failed"); return; }
   availFrozen = data.is_frozen;
   updateFreezeUI();
   window.location.reload();
 }
 
 async function loadTeacherList() {
-  const res = await apiFetch(API + "/availability/teachers", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/availability/teachers", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const sel = document.getElementById("teacherSelect");
@@ -1362,13 +1451,8 @@ async function viewTeacherAvailability() {
   const box = document.getElementById("teacherView");
   if (!id) { box.innerHTML = ""; return; }
 
-  const res = await apiFetch(API + "/availability/teacher/" + id, {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    box.innerHTML = "Failed to load.";
-    return;
-  }
+  const res = await apiFetch(API + "/availability/teacher/" + id, { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { box.innerHTML = "Failed to load."; return; }
   const data = await res.json();
 
   const { days, time_slots } = availConfig;
@@ -1389,12 +1473,10 @@ async function viewTeacherAvailability() {
 }
 
 // ============================================================
-// Hard Constraints (User Story 7)
+// Hard Constraints
 // ============================================================
-
 let constraintCache = {};
 let constraintIsAdmin = false;
-
 const ALL_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 async function initConstraintsPage() {
@@ -1402,24 +1484,14 @@ async function initConstraintsPage() {
   if (!box) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   constraintIsAdmin = me.roles.includes("admin");
 
   const accessMsg = document.getElementById("accessMsg");
-
   if (!constraintIsAdmin) {
     accessMsg.textContent = "Read-only. Only admins can modify hard constraints.";
     document.querySelectorAll(".switch input").forEach(i => i.disabled = true);
@@ -1428,21 +1500,13 @@ async function initConstraintsPage() {
 
   const dayChecks = document.getElementById("dayChecks");
   if (dayChecks) {
-    dayChecks.innerHTML = ALL_DAYS.map(d => `
-      <label>
-        <input type="checkbox" class="day-check" value="${d}" checked />
-        ${d}
-      </label>
-    `).join("");
+    dayChecks.innerHTML = ALL_DAYS.map(d => `<label><input type="checkbox" class="day-check" value="${d}" checked />${d}</label>`).join("");
   }
-
   await loadConstraints();
 }
 
 async function loadConstraints() {
-  const res = await apiFetch(API + "/constraints", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/constraints", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
 
@@ -1488,19 +1552,12 @@ async function onToggle(type, value) {
 
   const payload = {
     is_active: value,
-    config: type === "lunch_break"
-      ? (constraintCache["lunch_break"]?.config || {
-          start: "12:00", end: "13:00", days: ALL_DAYS,
-        })
-      : null,
+    config: type === "lunch_break" ? (constraintCache["lunch_break"]?.config || { start: "12:00", end: "13:00", days: ALL_DAYS }) : null,
   };
 
   const res = await apiFetch(API + "/constraints/" + type, {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
@@ -1529,18 +1586,14 @@ async function onToggle(type, value) {
 async function saveLunchConfig() {
   const start = document.getElementById("lunchStart").value;
   const end = document.getElementById("lunchEnd").value;
-  const days = Array.from(document.querySelectorAll(".day-check:checked"))
-    .map(cb => cb.value);
+  const days = Array.from(document.querySelectorAll(".day-check:checked")).map(cb => cb.value);
 
   const msg = document.getElementById("msg");
   msg.textContent = "";
 
   const res = await apiFetch(API + "/constraints/lunch_break", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify({
       is_active: document.getElementById("toggle-lunch_break").checked,
       config: { start, end, days },
@@ -1548,12 +1601,7 @@ async function saveLunchConfig() {
   });
   const data = await res.json();
 
-  if (!res.ok) {
-    msg.style.color = "#dc2626";
-    msg.textContent = data.detail || "Failed to save lunch break";
-    return;
-  }
-
+  if (!res.ok) { msg.style.color = "#dc2626"; msg.textContent = data.detail || "Failed to save lunch break"; return; }
   constraintCache["lunch_break"] = data;
   msg.style.color = "#16a34a";
   msg.textContent = "Lunch break configuration saved.";
@@ -1565,57 +1613,31 @@ async function runDemoValidation() {
   box.textContent = "Running...";
 
   const entries = [
-    {
-      day: "Mon", time_slot: "08:30-10:00",
-      room_id: 1, room_code: "C102",
-      teacher_id: 1, teacher_name: "Dr. Arman",
-      course_code: "CS201",
-    },
-    {
-      day: "Mon", time_slot: "08:30-10:00",
-      room_id: 1, room_code: "C102",
-      teacher_id: 1, teacher_name: "Dr. Arman",
-      course_code: "CS301",
-    },
-    {
-      day: "Mon", time_slot: "12:00-13:30",
-      room_id: 2, room_code: "G201",
-      teacher_id: 2, teacher_name: "Prof. Dana",
-      course_code: "MATH101",
-    },
+    { day: "Mon", time_slot: "08:30-10:00", room_id: 1, room_code: "C102", teacher_id: 1, teacher_name: "Dr. Arman", course_code: "CS201" },
+    { day: "Mon", time_slot: "08:30-10:00", room_id: 1, room_code: "C102", teacher_id: 1, teacher_name: "Dr. Arman", course_code: "CS301" },
+    { day: "Mon", time_slot: "12:00-13:30", room_id: 2, room_code: "G201", teacher_id: 2, teacher_name: "Prof. Dana", course_code: "MATH101" },
   ];
 
   const res = await apiFetch(API + "/constraints/validate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify({ entries }),
   });
   const data = await res.json();
 
-  if (!res.ok) {
-    box.textContent = "Error: " + (data.detail || "Unknown");
-    return;
-  }
+  if (!res.ok) { box.textContent = "Error: " + (data.detail || "Unknown"); return; }
 
   if (data.valid) {
     box.innerHTML = `<div class="ok-item">No conflicts detected (${data.checked} entries checked).</div>`;
     return;
   }
 
-  box.innerHTML = data.conflicts.map(c => `
-    <div class="conflict-item">
-      <b>[${c.type}]</b> ${escapeHTML(c.message)}
-    </div>
-  `).join("");
+  box.innerHTML = data.conflicts.map(c => `<div class="conflict-item"><b>[${c.type}]</b> ${escapeHTML(c.message)}</div>`).join("");
 }
 
 // ============================================================
-// Soft Constraints (User Story 8)
+// Soft Constraints
 // ============================================================
-
 let softCache = {};
 let softIsAdmin = false;
 
@@ -1624,19 +1646,10 @@ async function initSoftConstraintsPage() {
   if (!listEl) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   softIsAdmin = me.roles.includes("admin");
 
@@ -1653,13 +1666,8 @@ async function loadSoftConstraints() {
   const listEl = document.getElementById("softList");
   if (!listEl) return;
 
-  const res = await apiFetch(API + "/soft-constraints", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    listEl.innerHTML = "Failed to load soft constraints.";
-    return;
-  }
+  const res = await apiFetch(API + "/soft-constraints", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { listEl.innerHTML = "Failed to load soft constraints."; return; }
   const list = await res.json();
 
   softCache = {};
@@ -1673,19 +1681,12 @@ async function loadSoftConstraints() {
 
       <div class="weight-row">
         <span style="font-size:13px;color:#666;min-width:60px;">Weight</span>
-        <input type="range" min="0" max="10" step="1"
-               id="slider-${c.constraint_key}"
-               value="${c.weight}"
-               oninput="onWeightChange('${c.constraint_key}', this.value)"
-               ${softIsAdmin ? "" : "disabled"} />
+        <input type="range" min="0" max="10" step="1" id="slider-${c.constraint_key}" value="${c.weight}" oninput="onWeightChange('${c.constraint_key}', this.value)" ${softIsAdmin ? "" : "disabled"} />
         <span class="weight-value" id="weight-${c.constraint_key}">${c.weight}</span>
       </div>
 
       <label class="enable-toggle">
-        <input type="checkbox" id="enabled-${c.constraint_key}"
-               ${c.is_enabled ? "checked" : ""}
-               ${softIsAdmin ? "" : "disabled"} />
-        Enabled
+        <input type="checkbox" id="enabled-${c.constraint_key}" ${c.is_enabled ? "checked" : ""} ${softIsAdmin ? "" : "disabled"} /> Enabled
       </label>
     </div>
   `).join("");
@@ -1694,17 +1695,14 @@ async function loadSoftConstraints() {
 function onWeightChange(key, value) {
   const label = document.getElementById("weight-" + key);
   if (label) label.textContent = value;
-
-  if (softCache[key]) {
-    softCache[key].weight = parseInt(value, 10);
-  }
+  if (softCache[key]) softCache[key].weight = parseInt(value, 10);
 }
 
 async function saveAllWeights() {
   const msg = document.getElementById("msg");
   msg.textContent = "";
-
   let saved = 0;
+
   for (const key of Object.keys(softCache)) {
     const slider = document.getElementById("slider-" + key);
     const enabled = document.getElementById("enabled-" + key);
@@ -1721,10 +1719,7 @@ async function saveAllWeights() {
 
     const res = await apiFetch(API + "/soft-constraints/" + key, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify({ weight, is_enabled }),
     });
 
@@ -1746,22 +1741,13 @@ async function saveAllWeights() {
 
 async function resetWeights() {
   if (!confirm("Reset all soft constraints to default weights?")) return;
-
   const msg = document.getElementById("msg");
   msg.textContent = "";
 
-  const res = await apiFetch(API + "/soft-constraints/reset", {
-    method: "POST",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/soft-constraints/reset", { method: "POST", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
 
-  if (!res.ok) {
-    msg.style.color = "#dc2626";
-    msg.textContent = data.detail || "Reset failed";
-    return;
-  }
-
+  if (!res.ok) { msg.style.color = "#dc2626"; msg.textContent = data.detail || "Reset failed"; return; }
   msg.style.color = "#16a34a";
   msg.textContent = "Soft constraints reset to defaults.";
   loadSoftConstraints();
@@ -1782,21 +1768,14 @@ async function runScorePreview() {
 
   const res = await apiFetch(API + "/soft-constraints/score", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify({ entries }),
   });
   const data = await res.json();
 
-  if (!res.ok) {
-    box.textContent = "Error: " + (data.detail || "Unknown");
-    return;
-  }
+  if (!res.ok) { box.textContent = "Error: " + (data.detail || "Unknown"); return; }
 
-  const scoreClass = data.total_score >= 70 ? "" :
-                     data.total_score >= 40 ? "mid" : "low";
+  const scoreClass = data.total_score >= 70 ? "" : data.total_score >= 40 ? "mid" : "low";
 
   const breakdownHTML = data.breakdown.length === 0
     ? `<p style="font-size:13px;color:#888;">No active soft constraints.</p>`
@@ -1814,15 +1793,13 @@ async function runScorePreview() {
       <span class="score-number ${scoreClass}">${data.total_score}</span>
       <span class="score-label">/ 100 &nbsp; · &nbsp; ${data.checked_entries} entries evaluated</span>
     </div>
-    <div class="score-bar">
-      <div style="width: ${data.total_score}%"></div>
-    </div>
+    <div class="score-bar"><div style="width: ${data.total_score}%"></div></div>
     ${breakdownHTML}
   `;
 }
 
 // ============================================================
-// AI Timetable Generator (User Story 9)
+// AI Timetable Generator
 // ============================================================
 
 async function initGeneratorPage() {
@@ -1830,35 +1807,20 @@ async function initGeneratorPage() {
   if (!btn) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   const isAdmin = me.roles.includes("admin");
 
-  if (!isAdmin) {
-    btn.disabled = true;
-    btn.textContent = "Admin only";
-    return;
-  }
+  if (!isAdmin) { btn.disabled = true; btn.textContent = "Admin only"; return; }
 
   loadExistingEntries();
 }
 
 async function loadExistingEntries() {
-  const res = await apiFetch(API + "/generator/entries", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/generator/entries", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const entries = await res.json();
   if (entries.length === 0) return;
@@ -1887,12 +1849,8 @@ async function runGeneration() {
   }, 200);
 
   try {
-    const res = await apiFetch(API + "/generator/generate", {
-      method: "POST",
-      headers: { "Authorization": "Bearer " + getToken() },
-    });
+    const res = await apiFetch(API + "/generator/generate", { method: "POST", headers: { "Authorization": "Bearer " + getToken() } });
     const data = await res.json();
-
     clearInterval(timer);
 
     if (!res.ok) {
@@ -1915,8 +1873,7 @@ async function runGeneration() {
       msg = `Generation failed: 0/${data.total_sessions} sessions could be placed. Check data.`;
     } else {
       const cov = data.coverage !== undefined ? data.coverage : "?";
-      msg = `Generated ${data.placed_count}/${data.total_sessions} sessions (${cov}% coverage). `
-          + `${data.failed_count} could not be placed.`;
+      msg = `Generated ${data.placed_count}/${data.total_sessions} sessions (${cov}% coverage). ${data.failed_count} could not be placed.`;
     }
     showStatusBanner(data.status, msg);
 
@@ -1931,7 +1888,6 @@ async function runGeneration() {
     progressText.textContent = "Network error";
     showStatusBanner("error", "Network error");
   }
-
   btn.disabled = false;
 }
 
@@ -1991,13 +1947,9 @@ function renderGeneratorLog(lines) {
 }
 
 function generatorGroupLabel(entry) {
-  // Generation returns the full group_code; saved entries return the parent
-  // target_groups value and a separate subgroup number.
   if (entry.group_code) return entry.group_code;
   if (!entry.target_groups) return "—";
-  return entry.sub_group
-    ? `${entry.target_groups}-${entry.sub_group}`
-    : entry.target_groups;
+  return entry.sub_group ? `${entry.target_groups}-${entry.sub_group}` : entry.target_groups;
 }
 
 function renderGeneratorEntries(entries) {
@@ -2020,10 +1972,7 @@ function renderGeneratorEntries(entries) {
 
 function renderGeneratorFailed(failed) {
   const box = document.getElementById("failedBox");
-  if (!failed || failed.length === 0) {
-    box.style.display = "none";
-    return;
-  }
+  if (!failed || failed.length === 0) { box.style.display = "none"; return; }
   box.style.display = "block";
   box.innerHTML = `
     <b>${failed.length} session(s) could not be placed:</b>
@@ -2034,18 +1983,17 @@ function renderGeneratorFailed(failed) {
 }
 
 // ============================================================
-// Real-Time Conflict Detection (User Story 10)
+// Real-Time Conflict Detection (Merged Filtering logic)
 // ============================================================
-
 let scheduleData = { days: [], time_slots: [], cells: [], conflicts: [] };
 let roomsCache = [];
 let currentMoveEntry = null;
 let scheduleIsAdmin = false;
 let draggingEntryId = null;
 let pendingSwap = null;
+let scheduleGroupsCache = [];
+let currentProgramFilter = "all";
 
-
-// 用于根据子组（如 IS-26-AI-1）反查大组所属的专业
 function getProgramForGroup(groupCode) {
   if (!groupCode) return null;
   const baseCode = groupCode.split("-")[0] + "-" + groupCode.split("-")[1] + "-" + groupCode.split("-")[2];
@@ -2053,20 +2001,9 @@ function getProgramForGroup(groupCode) {
   return g ? g.program : null;
 }
 
-
-let scheduleGroupsCache = [];
-let currentProgramFilter = "all";
-
-
-// ★ 补回这两个函数
 async function refreshGrid() {
-  const res = await apiFetch(API + "/conflicts/grid", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    console.error("Failed to load grid");
-    return;
-  }
+  const res = await apiFetch(API + "/conflicts/grid", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { console.error("Failed to load grid"); return; }
   scheduleData = await res.json();
   renderScheduleGrid();
   renderConflicts();
@@ -2076,8 +2013,6 @@ async function refreshGrid() {
 async function rescanConflicts() {
   await refreshGrid();
 }
-
-
 
 async function initSchedulePage() {
   const summaryEl = document.getElementById("summaryText");
@@ -2099,7 +2034,7 @@ async function initSchedulePage() {
   const groupsRes = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
   if (groupsRes.ok) scheduleGroupsCache = await groupsRes.json();
 
-  // ★ 直接去填充 HTML 里已经存在的下拉框（不再动态注入）
+  // ★ 填充专业过滤下拉框
   try {
     const progRes = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
     if (progRes.ok) {
@@ -2113,9 +2048,7 @@ async function initSchedulePage() {
         sel.innerHTML = opts;
       }
     }
-  } catch (e) {
-    console.error("Failed to load programs", e);
-  }
+  } catch (e) { console.error("Failed to load programs", e); }
 
   const daySel = document.getElementById("moveDay");
   const slotSel = document.getElementById("moveSlot");
@@ -2203,12 +2136,10 @@ function updateBanner() {
 
   if (errors > 0) {
     banner.className = "show error";
-    banner.innerHTML = `<span class="count">${errors}</span>
-      <span>hard-constraint conflict(s) detected. Click any red session for details.</span>`;
+    banner.innerHTML = `<span class="count">${errors}</span><span>hard-constraint conflict(s) detected. Click any red session for details.</span>`;
   } else if (warnings > 0) {
     banner.className = "show warning";
-    banner.innerHTML = `<span class="count">${warnings}</span>
-      <span>warning(s) detected. Review the reported issues before approval.</span>`;
+    banner.innerHTML = `<span class="count">${warnings}</span><span>warning(s) detected. Review the reported issues before approval.</span>`;
   } else {
     banner.className = "show success";
     banner.innerHTML = `No conflicts detected by the current checks. Review coverage and preferences separately.`;
@@ -2239,19 +2170,12 @@ function renderConflicts() {
   `).join("");
 }
 
-// ---------- Tooltip ----------
 function showEntryTooltip(evt, entryId) {
   const tt = document.getElementById("tooltip");
-
-  const cell = scheduleData.cells.find(c =>
-    c.entries.some(e => e.id === entryId)
-  );
+  const cell = scheduleData.cells.find(c => c.entries.some(e => e.id === entryId));
   if (!cell) return;
   const entry = cell.entries.find(e => e.id === entryId);
-
-  const conflicts = (scheduleData.conflicts || []).filter(c =>
-    c.entry_ids.includes(entryId)
-  );
+  const conflicts = (scheduleData.conflicts || []).filter(c => c.entry_ids.includes(entryId));
 
   let html = `
     <div class="tt-title">${escapeHTML(entry.course_code)} · ${escapeHTML(entry.session_type)}</div>
@@ -2262,9 +2186,7 @@ function showEntryTooltip(evt, entryId) {
 
   if (conflicts.length > 0) {
     html += `<div class="tt-row" style="margin-top:8px;border-top:1px solid #374151;padding-top:6px;">`;
-    conflicts.forEach(c => {
-      html += `<div style="color:#fca5a5;">⚠ ${escapeHTML(c.message)}</div>`;
-    });
+    conflicts.forEach(c => { html += `<div style="color:#fca5a5;">⚠ ${escapeHTML(c.message)}</div>`; });
     html += `</div>`;
   }
 
@@ -2278,30 +2200,19 @@ function moveTooltip(evt) {
   const padding = 14;
   let x = evt.clientX + padding;
   let y = evt.clientY + padding;
-
   const rect = tt.getBoundingClientRect();
-  if (x + rect.width > window.innerWidth - 8) {
-    x = evt.clientX - rect.width - padding;
-  }
-  if (y + rect.height > window.innerHeight - 8) {
-    y = evt.clientY - rect.height - padding;
-  }
-
+  if (x + rect.width > window.innerWidth - 8) { x = evt.clientX - rect.width - padding; }
+  if (y + rect.height > window.innerHeight - 8) { y = evt.clientY - rect.height - padding; }
   tt.style.left = x + "px";
   tt.style.top = y + "px";
 }
 
-function hideTooltip() {
-  document.getElementById("tooltip").style.display = "none";
-}
+function hideTooltip() { document.getElementById("tooltip").style.display = "none"; }
 
-// ---------- Move modal ----------
 function openMoveModal(entryId, courseCode, day, slot) {
   if (!scheduleIsAdmin) return;
-
   currentMoveEntry = entryId;
-  document.getElementById("moveEntryLabel").textContent =
-    `${courseCode} (entry #${entryId})`;
+  document.getElementById("moveEntryLabel").textContent = `${courseCode} (entry #${entryId})`;
   document.getElementById("moveDay").value = day;
   document.getElementById("moveSlot").value = slot;
   document.getElementById("moveModal").classList.add("open");
@@ -2314,39 +2225,25 @@ function closeMoveModal() {
 
 async function submitMove() {
   if (!currentMoveEntry) return;
-
   const day = document.getElementById("moveDay").value;
   const time_slot = document.getElementById("moveSlot").value;
   const room_id = parseInt(document.getElementById("moveRoom").value, 10);
-
   const res = await apiFetch(API + "/conflicts/entries/" + currentMoveEntry, {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken(),
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
     body: JSON.stringify({ day, time_slot, room_id }),
   });
-
   const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Move failed");
-    return;
-  }
-
+  if (!res.ok) { alert(data.detail || "Move failed"); return; }
   closeMoveModal();
   await refreshGrid();
 }
 
 // ============================================================
-// Interactive Drag-and-Drop Grid (User Story 11)
+// Interactive Drag-and-Drop Grid
 // ============================================================
-
 function onDragStart(evt, entryId) {
-  if (!scheduleIsAdmin) {
-    evt.preventDefault();
-    return;
-  }
+  if (!scheduleIsAdmin) { evt.preventDefault(); return; }
   draggingEntryId = entryId;
   evt.dataTransfer.effectAllowed = "move";
   evt.dataTransfer.setData("text/plain", String(entryId));
@@ -2356,48 +2253,36 @@ function onDragStart(evt, entryId) {
 function onDragEnd(evt) {
   evt.currentTarget.classList.remove("dragging");
   document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid")
-    .forEach(td => td.classList.remove(
-      "drop-target", "drop-target-occupied", "drop-invalid"
-    ));
+    .forEach(td => td.classList.remove("drop-target", "drop-target-occupied", "drop-invalid"));
   draggingEntryId = null;
 }
 
 function onCellDragOver(evt, day, slot) {
   if (!draggingEntryId) return;
   evt.preventDefault();
-
   const td = evt.currentTarget;
-  document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid")
-    .forEach(el => el.classList.remove("drop-target", "drop-target-occupied", "drop-invalid"));
+  document.querySelectorAll("td.drop-target, td.drop-target-occupied, td.drop-invalid").forEach(el => el.classList.remove("drop-target", "drop-target-occupied", "drop-invalid"));
 
   const cell = scheduleData.cells.find(c => c.day === day && c.time_slot === slot);
   const entries = (cell && cell.entries) || [];
 
-  // 找到当前正在拖拽的卡片数据
   let draggedEntry = null;
   for (const c of scheduleData.cells) {
     const found = c.entries.find(e => e.id === draggingEntryId);
     if (found) { draggedEntry = found; break; }
   }
 
-  // 检查目标格子里有没有和拖拽卡片“同组”的课
   const hasSameGroup = draggedEntry && entries.some(e => e.target_groups === draggedEntry.target_groups);
-
   if (hasSameGroup) {
-    // 同一个组撞车了，标黄，准备交换
     td.classList.add("drop-target-occupied");
   } else {
-    // 只是不同组的课在这个时段，直接标蓝，允许放入
     td.classList.add("drop-target");
   }
   evt.dataTransfer.dropEffect = "move";
 }
 
-
 function onCellDragLeave(evt) {
-  evt.currentTarget.classList.remove(
-    "drop-target", "drop-target-occupied", "drop-invalid"
-  );
+  evt.currentTarget.classList.remove("drop-target", "drop-target-occupied", "drop-invalid");
 }
 
 async function onCellDrop(evt, day, slot) {
@@ -2434,15 +2319,10 @@ async function moveEntryToSlot(entryId, day, time_slot) {
   try {
     const res = await apiFetch(API + "/conflicts/entries/" + entryId, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify({ day, time_slot }),
     });
-
     if (!res.ok) throw new Error("Move failed");
-
     await refreshGrid();
   } catch (err) {
     alert("Failed to save change. The card has been reverted.");
@@ -2452,15 +2332,11 @@ async function moveEntryToSlot(entryId, day, time_slot) {
 
 function openSwapModal(draggedId, targetId, targetCourse, targetDay, targetSlot) {
   pendingSwap = { draggedId, targetId };
-
-  const draggedCell = scheduleData.cells.find(c =>
-    c.entries.some(e => e.id === draggedId));
+  const draggedCell = scheduleData.cells.find(c => c.entries.some(e => e.id === draggedId));
   const draggedEntry = draggedCell.entries.find(e => e.id === draggedId);
 
-  document.getElementById("swapLineA").innerHTML =
-    `<b>${draggedEntry.course_code}</b> — ${draggedCell.day} ${draggedCell.time_slot} · Room ${draggedEntry.room_code}`;
-  document.getElementById("swapLineB").innerHTML =
-    `<b>${targetCourse}</b> — ${targetDay} ${targetSlot} · Room ${scheduleData.cells.find(c => c.entries.some(e => e.id === targetId)).entries.find(e => e.id === targetId).room_code}`;
+  document.getElementById("swapLineA").innerHTML = `<b>${escapeHTML(draggedEntry.course_code)}</b> — ${draggedCell.day} ${draggedCell.time_slot} · Room ${escapeHTML(draggedEntry.room_code)}`;
+  document.getElementById("swapLineB").innerHTML = `<b>${escapeHTML(targetCourse)}</b> — ${targetDay} ${targetSlot} · Room ${escapeHTML(scheduleData.cells.find(c => c.entries.some(e => e.id === targetId)).entries.find(e => e.id === targetId).room_code)}`;
 
   document.getElementById("swapModal").classList.add("open");
 }
@@ -2472,22 +2348,13 @@ function closeSwapModal() {
 
 async function confirmSwap() {
   if (!pendingSwap) return;
-
   try {
     const res = await apiFetch(API + "/conflicts/swap", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
-      body: JSON.stringify({
-        entry_id_a: pendingSwap.draggedId,
-        entry_id_b: pendingSwap.targetId,
-      }),
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
+      body: JSON.stringify({ entry_id_a: pendingSwap.draggedId, entry_id_b: pendingSwap.targetId }),
     });
-
     if (!res.ok) throw new Error("Swap failed");
-
     closeSwapModal();
     await refreshGrid();
   } catch (err) {
@@ -2498,62 +2365,42 @@ async function confirmSwap() {
 }
 
 // ============================================================
-// Smart Room Auto-Fitting (User Story 12)
+// Smart Room Auto-Fitting
 // ============================================================
-
 async function initRoomFittingPage() {
   const form = document.getElementById("fitForm");
   if (!form) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const groupsRes = await apiFetch(API + "/student-groups", {
-    headers: { "Authorization": "Bearer " + token },
-  });
+  const groupsRes = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
   if (groupsRes.ok) {
     const groups = await groupsRes.json();
     const box = document.getElementById("groupsBox");
     groups.forEach(g => {
       const lbl = document.createElement("label");
-      lbl.innerHTML = `
-        <input type="checkbox" class="fit-group-check" value="${g.group_code}" />
-        ${g.group_code} <span style="color:#888;">(${g.student_count})</span>
-      `;
+      lbl.innerHTML = `<input type="checkbox" class="fit-group-check" value="${g.group_code}" />${g.group_code} <span style="color:#888;">(${g.student_count})</span>`;
       box.appendChild(lbl);
     });
   }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-
     const session_type = document.getElementById("sessionType").value;
     const course_code = document.getElementById("courseCode").value.trim() || null;
-    const target_groups = Array.from(document.querySelectorAll(".fit-group-check:checked"))
-      .map(cb => cb.value);
+    const target_groups = Array.from(document.querySelectorAll(".fit-group-check:checked")).map(cb => cb.value);
 
-    if (target_groups.length === 0) {
-      alert("Select at least one student group.");
-      return;
-    }
+    if (target_groups.length === 0) { alert("Select at least one student group."); return; }
 
     const res = await apiFetch(API + "/room-fitting/suggest", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify({ session_type, target_groups, course_code }),
     });
     const data = await res.json();
 
-    if (!res.ok) {
-      alert(data.detail || "Failed");
-      return;
-    }
+    if (!res.ok) { alert(data.detail || "Failed"); return; }
 
     renderFitResults(data);
   });
@@ -2565,13 +2412,11 @@ function renderFitResults(data) {
   const tbody = document.getElementById("resultBody");
 
   panel.style.display = "block";
-
   summary.innerHTML = `
     Session type: <b>${data.session_type}</b> ·
     Target groups: <b>${data.target_groups.join(", ")}</b> ·
     Total students: <b>${data.required_seats}</b>
-    <br/>
-    Required room types: <b>${data.required_room_types.join(" / ") || "any"}</b> ·
+    <br/>Required room types: <b>${data.required_room_types.join(" / ") || "any"}</b> ·
     Required equipment: <b>${data.required_equipment.join(", ") || "none"}</b>
   `;
 
@@ -2605,15 +2450,12 @@ function renderFitResults(data) {
   }).join("");
 }
 
-
 // ============================================================
-// Manage Academic Semesters (US-07)
+// Manage Academic Semesters
 // ============================================================
-
 let editingSemesterId = null;
 let semesterIsAdmin = false;
 
-// ---------- Semester field validators ----------
 function validateSemesterField(fieldId) {
   const inputEl = document.getElementById(fieldId);
   const msgEl = document.getElementById(fieldId + "Msg");
@@ -2622,48 +2464,29 @@ function validateSemesterField(fieldId) {
   const value = inputEl.value.trim();
   let errorMsg = "";
 
-    if (fieldId === "name") {
-    if (!value) {
-      errorMsg = "Semester name is required.";
-    } else if (!/^(\d{4})\s+(Fall|Spring|Summer)$/i.test(value)) {
-      errorMsg = "Format must be like '2025 Fall' or '2026 Spring'.";
-    }
+  if (fieldId === "name") {
+    if (!value) errorMsg = "Semester name is required.";
+    else if (!/^(\d{4})\s+(Fall|Spring|Summer)$/i.test(value)) errorMsg = "Format must be like '2025 Fall' or '2026 Spring'.";
   } else if (fieldId === "start_date" || fieldId === "end_date") {
-    if (!value) {
-      errorMsg = fieldId === "start_date" ? "Start date is required." : "End date is required.";
-    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      errorMsg = "Date must be in format YYYY-MM-DD (e.g., 2026-09-01).";
-    }
+    if (!value) errorMsg = fieldId === "start_date" ? "Start date is required." : "End date is required.";
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) errorMsg = "Date must be in format YYYY-MM-DD (e.g., 2026-09-01).";
   }
 
   msgEl.textContent = errorMsg;
-  if (errorMsg) {
-    inputEl.classList.add("input-error");
-    return false;
-  }
+  if (errorMsg) { inputEl.classList.add("input-error"); return false; }
   inputEl.classList.remove("input-error");
   return true;
 }
-
 
 async function initSemestersPage() {
   const table = document.getElementById("semesterTable");
   if (!table) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   semesterIsAdmin = me.roles.includes("admin");
 
@@ -2681,8 +2504,6 @@ async function initSemestersPage() {
   }
 
   const form = document.getElementById("semesterForm");
-
-  // Live validation
   ["name", "start_date", "end_date"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -2695,73 +2516,49 @@ async function initSemestersPage() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-
     const formMsg = document.getElementById("formMsg");
     formMsg.textContent = "";
 
-    // Validate all fields
     const okName = validateSemesterField("name");
     const okStart = validateSemesterField("start_date");
     const okEnd = validateSemesterField("end_date");
     if (!okName || !okStart || !okEnd) return;
 
-        const name = document.getElementById("name").value.trim();
+    const name = document.getElementById("name").value.trim();
     const start_date = document.getElementById("start_date").value.trim();
     const end_date = document.getElementById("end_date").value.trim();
 
-    // Cross-field check
     if (start_date >= end_date) {
-      document.getElementById("end_dateMsg").textContent =
-        "End date must be after start date.";
+      document.getElementById("end_dateMsg").textContent = "End date must be after start date.";
       document.getElementById("end_date").classList.add("input-error");
       return;
     }
 
-    // Parse name like "2025 Fall" → academic_year=2025, term="Fall"
     const m = name.match(/^(\d{4})\s+(Fall|Spring|Summer)$/i);
     if (!m) {
-      document.getElementById("nameMsg").textContent =
-        "Semester name must be like '2025 Fall' or '2026 Spring'.";
+      document.getElementById("nameMsg").textContent = "Semester name must be like '2025 Fall' or '2026 Spring'.";
       document.getElementById("name").classList.add("input-error");
       return;
     }
     const academic_year = parseInt(m[1], 10);
     const term = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
 
-    const payload = {
-      name,
-      academic_year,
-      term,
-      start_date,
-      end_date,
-    };
+    const payload = { name, academic_year, term, start_date, end_date };
 
-    const url = editingSemesterId
-      ? API + "/semesters/" + editingSemesterId
-      : API + "/semesters";
+    const url = editingSemesterId ? API + "/semesters/" + editingSemesterId : API + "/semesters";
     const method = editingSemesterId ? "PUT" : "POST";
 
     const r = await apiFetch(url, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
     });
     const data = await r.json();
 
-        if (!r.ok) {
-      // 422: FastAPI validation error
+    if (!r.ok) {
       if (r.status === 422 && Array.isArray(data.detail)) {
         const field = data.detail[0].loc[data.detail[0].loc.length - 1];
-        const map = {
-          "name": "nameMsg",
-          "academic_year": "nameMsg",
-          "term": "nameMsg",
-          "start_date": "start_dateMsg",
-          "end_date": "end_dateMsg",
-        };
+        const map = { "name": "nameMsg", "academic_year": "nameMsg", "term": "nameMsg", "start_date": "start_dateMsg", "end_date": "end_dateMsg" };
         const msgId = map[field] || "nameMsg";
         const inputId = msgId.replace("Msg", "");
         document.getElementById(msgId).textContent = data.detail[0].msg;
@@ -2780,9 +2577,7 @@ async function initSemestersPage() {
     }
 
     formMsg.style.color = "#16a34a";
-    formMsg.textContent = editingSemesterId
-      ? "Semester updated successfully"
-      : "Semester created successfully";
+    formMsg.textContent = editingSemesterId ? "Semester updated successfully" : "Semester created successfully";
 
     editingSemesterId = null;
     document.getElementById("formSubmitBtn").textContent = "Save Semester";
@@ -2806,42 +2601,25 @@ async function loadSemesters() {
   const tbody = document.getElementById("semesterTable");
   if (!tbody) return;
 
-  const res = await apiFetch(API + "/semesters", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="5">Failed to load semesters</td></tr>`;
-    return;
-  }
+  const res = await apiFetch(API + "/semesters", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5">Failed to load semesters</td></tr>`; return; }
   const semesters = await res.json();
 
-  // Update active label
   const active = semesters.find(s => s.is_active);
-  document.getElementById("activeSemesterLabel").textContent =
-    active ? `Active: ${active.name}` : "No active semester";
+  document.getElementById("activeSemesterLabel").textContent = active ? `Active: ${active.name}` : "No active semester";
 
-  if (semesters.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No semesters yet.</td></tr>`;
-    return;
-  }
+  if (semesters.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="color:#888;">No semesters yet.</td></tr>`; return; }
 
   tbody.innerHTML = semesters.map(s => `
     <tr>
-      <td><b>${s.name}</b></td>
+      <td><b>${escapeHTML(s.name)}</b></td>
       <td>${s.start_date}</td>
       <td>${s.end_date}</td>
-      <td>
-        <span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">
-          ${s.is_active ? "Active" : "Inactive"}
-        </span>
-      </td>
+      <td><span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">${s.is_active ? "Active" : "Inactive"}</span></td>
       ${semesterIsAdmin ? `
         <td>
           <button class="btn-edit" onclick="editSemester(${s.id})">Edit</button>
-          <button class="btn-activate" onclick="activateSemester(${s.id})"
-                  ${s.is_active ? "disabled" : ""}>
-            ${s.is_active ? "Active" : "Set Active"}
-          </button>
+          <button class="btn-activate" onclick="activateSemester(${s.id})" ${s.is_active ? "disabled" : ""}>${s.is_active ? "Active" : "Set Active"}</button>
           <button class="btn-del" onclick="deleteSemester(${s.id})">Delete</button>
         </td>
       ` : `<td></td>`}
@@ -2850,9 +2628,7 @@ async function loadSemesters() {
 }
 
 async function editSemester(id) {
-  const res = await apiFetch(API + "/semesters", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/semesters", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const s = list.find(x => x.id === id);
@@ -2869,34 +2645,19 @@ async function editSemester(id) {
 }
 
 async function activateSemester(id) {
-  const res = await apiFetch(API + "/semesters/" + id + "/activate", {
-    method: "POST",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/semesters/" + id + "/activate", { method: "POST", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Failed to activate");
-    return;
-  }
+  if (!res.ok) { alert(data.detail || "Failed to activate"); return; }
   loadSemesters();
 }
 
 async function deleteSemester(id) {
-  const ok = await showConfirm(
-    "Delete Semester",
-    "Are you sure you want to delete this semester? This cannot be undone."
-  );
+  const ok = await showConfirm("Delete Semester", "Are you sure you want to delete this semester? This cannot be undone.");
   if (!ok) return;
 
-  const res = await apiFetch(API + "/semesters/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/semesters/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
   showNotice("Semester deleted", "success");
   loadSemesters();
 }
@@ -2904,13 +2665,11 @@ async function deleteSemester(id) {
 // ============================================================
 // Manage Student Groups
 // ============================================================
-
 let editingGroupId = null;
 let groupIsAdmin = false;
 let departmentsCache = [];
-let programsCache = []; // ★ 用来存 Programs 和它们的 Tracks
+let programsCache = [];
 
-// 联动：Department -> Program
 function onDepartmentChange() {
   const deptName = document.getElementById("department").value;
   const progSel = document.getElementById("program");
@@ -2928,17 +2687,12 @@ function onDepartmentChange() {
   }
 }
 
-// 联动：Program -> Track
 function onGroupProgramChange() {
   const progName = document.getElementById("program").value;
   const trackSel = document.getElementById("track");
-
   trackSel.innerHTML = `<option value="">-- Select track --</option>`;
 
-  if (!progName) {
-    trackSel.disabled = true;
-    return;
-  }
+  if (!progName) { trackSel.disabled = true; return; }
 
   const prog = programsCache.find(p => p.program_name === progName);
   if (prog && prog.tracks) {
@@ -2966,10 +2720,7 @@ function validateGroupField(fieldId) {
 
   if (fieldId === "group_code") {
     if (!v) err = "Group code is required.";
-    // 更新正则：允许后面跟任意字母组合（如 AI, CYBER, BACK）
-    else if (!/^(IS|CS)-\d{2}-[A-Z]+$/i.test(v)) {
-      err = "Format must be like IS-23-AI or CS-24-BACK.";
-    }
+    else if (!/^(IS|CS)-\d{2}-[A-Z]+$/i.test(v)) err = "Format must be like IS-23-AI or CS-24-BACK.";
   } else if (fieldId === "department") {
     if (!v) err = "Please select a department.";
   } else if (fieldId === "program") {
@@ -3018,7 +2769,6 @@ async function initStudentGroupsPage() {
     accessMsg.textContent = "Read-only. Only admins can modify student groups.";
   }
 
-  // 获取 Departments (包含嵌套的 Programs)
   try {
     const deptRes = await apiFetch(API + "/student-groups/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
@@ -3028,7 +2778,6 @@ async function initStudentGroupsPage() {
         departmentsCache.map(d => `<option value="${d.name}">${d.name}</option>`).join("");
     }
 
-    // ★ 还需要获取 Programs 拿到 Tracks
     const progRes = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
     if (progRes.ok) {
       programsCache = await progRes.json();
@@ -3064,7 +2813,6 @@ async function initStudentGroupsPage() {
     const yearOverrideStr = document.getElementById("year_override").value.trim();
     const studentCountStr = document.getElementById("student_count").value.trim();
 
-    // 自动从 group_code 提取年份 (如 IS-23-AI -> 2023)
     const parts = groupCode.split("-");
     const enrollment_year = parts.length >= 2 ? 2000 + parseInt(parts[1], 10) : null;
     const year_override = yearOverrideStr ? parseInt(yearOverrideStr, 10) : null;
@@ -3073,7 +2821,7 @@ async function initStudentGroupsPage() {
     const payload = {
       group_code: groupCode,
       program: programName || null,
-      track: track,  // ★ 提交 track
+      track: track,
       enrollment_year: enrollment_year,
       year_override: year_override,
       student_count: student_count,
@@ -3121,10 +2869,7 @@ async function loadStudentGroups() {
 
   document.getElementById("countLabel").textContent = `${groups.length} group(s)`;
 
-  if (groups.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No groups yet.</td></tr>`;
-    return;
-  }
+  if (groups.length === 0) { tbody.innerHTML = `<tr><td colspan="8" style="color:#888;">No groups yet.</td></tr>`; return; }
 
   tbody.innerHTML = groups.map(g => {
     let currentYear = g.current_year ? `Year ${g.current_year}` : "-";
@@ -3132,10 +2877,10 @@ async function loadStudentGroups() {
 
     return `
       <tr>
-        <td><b>${g.group_code}</b></td>
-        <td>${g.program ? `<span class="badge">${g.program}</span>` : "-"}</td>
-        <td>${g.track ? `<span class="badge badge-track">${g.track}</span>` : "-"}</td> <!-- ★ 新增列 -->
-        <td>${g.department ? `<span class="badge badge-dept">${g.department}</span>` : "-"}</td>
+        <td><b>${escapeHTML(g.group_code)}</b></td>
+        <td>${g.program ? `<span class="badge">${escapeHTML(g.program)}</span>` : "-"}</td>
+        <td>${g.track ? `<span class="badge badge-track">${escapeHTML(g.track)}</span>` : "-"}</td>
+        <td>${g.department ? `<span class="badge badge-dept">${escapeHTML(g.department)}</span>` : "-"}</td>
         <td>${g.enrollment_year || "-"}</td>
         <td>${currentYear}</td>
         <td>${g.student_count}</td>
@@ -3162,15 +2907,14 @@ async function editGroup(id) {
   document.getElementById("sub_group_count").value = g.sub_group_count;
   document.getElementById("year_override").value = g.year_override || "";
 
-  // 回填联动
   const dept = departmentsCache.find(d => d.programs.some(p => p.name === g.program));
   document.getElementById("department").value = dept ? dept.name : "";
-  onDepartmentChange(); // 加载 Programs
+  onDepartmentChange();
 
   document.getElementById("program").value = g.program || "";
-  onGroupProgramChange(); // 加载 Tracks
+  onGroupProgramChange();
 
-  document.getElementById("track").value = g.track || ""; // 回填 Track
+  document.getElementById("track").value = g.track || "";
 
   editingGroupId = id;
   document.getElementById("formTitle").textContent = "Edit Student Group";
@@ -3179,25 +2923,15 @@ async function editGroup(id) {
 }
 
 async function deleteGroup(id) {
-  const ok = await showConfirm(
-    "Delete Student Group",
-    "Are you sure you want to delete this group? This cannot be undone."
-  );
+  const ok = await showConfirm("Delete Student Group", "Are you sure you want to delete this group? This cannot be undone.");
   if (!ok) return;
 
-  const res = await apiFetch(API + "/student-groups/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/student-groups/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
   showNotice("Student group deleted", "success");
   loadStudentGroups();
 }
-
 
 function filterGroups() {
   const el = document.getElementById("groupFilter");
@@ -3208,15 +2942,12 @@ function filterGroups() {
   });
 }
 
-
 // ============================================================
-// Manage Time Slots (US-09)
+// Manage Time Slots
 // ============================================================
-
 let editingSlotId = null;
 let slotIsAdmin = false;
 
-// ---------- Time Slot field validators ----------
 function validateSlotField(fieldId) {
   const inputEl = document.getElementById(fieldId);
   const msgEl = document.getElementById(fieldId + "Msg");
@@ -3226,50 +2957,31 @@ function validateSlotField(fieldId) {
   let errorMsg = "";
 
   if (fieldId === "slot_label") {
-    if (!value) {
-      errorMsg = "Slot label is required.";
-    } else if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(value)) {
-      errorMsg = "Format must be HH:MM-HH:MM (e.g., 08:30-09:20).";
-    }
+    if (!value) errorMsg = "Slot label is required.";
+    else if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(value)) errorMsg = "Format must be HH:MM-HH:MM (e.g., 08:30-09:20).";
   } else if (fieldId === "sort_order") {
-    if (!value) {
-      errorMsg = "Sort order is required.";
-    } else {
+    if (!value) errorMsg = "Sort order is required.";
+    else {
       const n = parseInt(value, 10);
-      if (isNaN(n) || n < 1 || n > 10) {
-        errorMsg = "Sort order must be between 1 and 10.";
-      }
+      if (isNaN(n) || n < 1 || n > 10) errorMsg = "Sort order must be between 1 and 10.";
     }
   }
 
   msgEl.textContent = errorMsg;
-  if (errorMsg) {
-    inputEl.classList.add("input-error");
-    return false;
-  }
+  if (errorMsg) { inputEl.classList.add("input-error"); return false; }
   inputEl.classList.remove("input-error");
   return true;
 }
-
 
 async function initTimeSlotsPage() {
   const table = document.getElementById("slotTable");
   if (!table) return;
 
   const token = getToken();
-  if (!token) {
-    window.location.href = "/login.html";
-    return;
-  }
+  if (!token) { window.location.href = "/login.html"; return; }
 
-  const meRes = await apiFetch(API + "/auth/me", {
-    headers: { "Authorization": "Bearer " + token },
-  });
-  if (!meRes.ok) {
-    localStorage.clear();
-    window.location.href = "/login.html";
-    return;
-  }
+  const meRes = await apiFetch(API + "/auth/me", { headers: { "Authorization": "Bearer " + token } });
+  if (!meRes.ok) { localStorage.clear(); window.location.href = "/login.html"; return; }
   const me = await meRes.json();
   slotIsAdmin = me.roles.includes("admin");
 
@@ -3287,8 +2999,6 @@ async function initTimeSlotsPage() {
   }
 
   const form = document.getElementById("slotForm");
-
-  // Live validation
   ["slot_label", "sort_order"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -3301,11 +3011,9 @@ async function initTimeSlotsPage() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-
     const msg = document.getElementById("formMsg");
     msg.textContent = "";
 
-    // Validate
     const okLabel = validateSlotField("slot_label");
     const okSort = validateSlotField("sort_order");
     if (!okLabel || !okSort) return;
@@ -3316,25 +3024,18 @@ async function initTimeSlotsPage() {
       is_active: document.getElementById("is_active").value === "true",
     };
 
-    const url = editingSlotId
-      ? API + "/time-slots/" + editingSlotId
-      : API + "/time-slots";
+    const url = editingSlotId ? API + "/time-slots/" + editingSlotId : API + "/time-slots";
     const method = editingSlotId ? "PUT" : "POST";
 
     const r = await apiFetch(url, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken(),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
       body: JSON.stringify(payload),
     });
     const data = await r.json();
 
     if (!r.ok) {
       const detail = data.detail || "Failed";
-
-      // Map server error to the right field
       if (detail.toLowerCase().includes("sort order")) {
         document.getElementById("sort_orderMsg").textContent = detail;
         document.getElementById("sort_order").classList.add("input-error");
@@ -3373,45 +3074,26 @@ async function loadTimeSlots() {
   const tbody = document.getElementById("slotTable");
   if (!tbody) return;
 
-  const res = await apiFetch(API + "/time-slots", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-  if (!res.ok) {
-    tbody.innerHTML = `<tr><td colspan="4">Failed to load time slots</td></tr>`;
-    return;
-  }
+  const res = await apiFetch(API + "/time-slots", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { tbody.innerHTML = `<tr><td colspan="4">Failed to load time slots</td></tr>`; return; }
   const slots = await res.json();
 
   document.getElementById("countLabel").textContent = `${slots.length} slot(s)`;
 
-  if (slots.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" style="color:#888;">No time slots yet.</td></tr>`;
-    return;
-  }
+  if (slots.length === 0) { tbody.innerHTML = `<tr><td colspan="4" style="color:#888;">No time slots yet.</td></tr>`; return; }
 
   tbody.innerHTML = slots.map(s => `
     <tr data-slot-id="${s.id}">
-      <td><b>${s.slot_label}</b></td>
+      <td><b>${escapeHTML(s.slot_label)}</b></td>
       <td>${s.sort_order}</td>
-      <td>
-        <span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">
-          ${s.is_active ? "Active" : "Inactive"}
-        </span>
-      </td>
-      ${slotIsAdmin ? `
-        <td>
-          <button class="btn-edit" onclick="editSlot(${s.id})">Edit</button>
-          <button class="btn-del" onclick="deleteSlot(${s.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
+      <td><span class="badge ${s.is_active ? "badge-active" : "badge-inactive"}">${s.is_active ? "Active" : "Inactive"}</span></td>
+      ${slotIsAdmin ? `<td><button class="btn-edit" onclick="editSlot(${s.id})">Edit</button><button class="btn-del" onclick="deleteSlot(${s.id})">Delete</button></td>` : `<td></td>`}
     </tr>
   `).join("");
 }
 
 async function editSlot(id) {
-  const res = await apiFetch(API + "/time-slots", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/time-slots", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) return;
   const list = await res.json();
   const s = list.find(x => x.id === id);
@@ -3428,25 +3110,15 @@ async function editSlot(id) {
 }
 
 async function deleteSlot(id) {
-  const ok = await showConfirm(
-    "Delete Time Slot",
-    "Are you sure you want to delete this time slot? This cannot be undone."
-  );
+  const ok = await showConfirm("Delete Time Slot", "Are you sure you want to delete this time slot? This cannot be undone.");
   if (!ok) return;
 
-  const res = await apiFetch(API + "/time-slots/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
+  const res = await apiFetch(API + "/time-slots/" + id, { method: "DELETE", headers: { "Authorization": "Bearer " + getToken() } });
   const data = await res.json();
-  if (!res.ok) {
-    showNotice(data.detail || "Delete failed", "error");
-    return;
-  }
+  if (!res.ok) { showNotice(data.detail || "Delete failed", "error"); return; }
   showNotice("Time slot deleted", "success");
   loadTimeSlots();
 }
-
 
 async function checkTimeSlotConsistency() {
   const resultEl = document.getElementById("checkResult");
@@ -3458,24 +3130,14 @@ async function checkTimeSlotConsistency() {
   listEl.style.display = "none";
   listEl.innerHTML = "";
 
-  // Clear old highlights
   document.querySelectorAll("#slotTable tr").forEach(tr => {
     tr.classList.remove("row-error");
   });
 
-  const res = await apiFetch(API + "/time-slots/validate", {
-    headers: { "Authorization": "Bearer " + getToken() },
-  });
-
-  if (!res.ok) {
-    resultEl.style.color = "#dc2626";
-    resultEl.textContent = "Failed to validate";
-    return;
-  }
-
+  const res = await apiFetch(API + "/time-slots/validate", { headers: { "Authorization": "Bearer " + getToken() } });
+  if (!res.ok) { resultEl.style.color = "#dc2626"; resultEl.textContent = "Failed to validate"; return; }
   const data = await res.json();
 
-  // Highlight bad rows
   data.bad_slot_ids.forEach(id => {
     const row = document.querySelector(`#slotTable tr[data-slot-id="${id}"]`);
     if (row) row.classList.add("row-error");
@@ -3504,12 +3166,7 @@ async function checkTimeSlotConsistency() {
 
   listEl.style.display = "block";
   listEl.innerHTML = data.issues.map(i => {
-    const iconMap = {
-      overlap: "⛔",
-      duplicate_sort: "🔁",
-      order_mismatch: "↕",
-      invalid_format: "⚠",
-    };
+    const iconMap = { overlap: "⛔", duplicate_sort: "🔁", order_mismatch: "↕", invalid_format: "⚠" };
     const icon = iconMap[i.type] || "⚠";
     return `
       <div class="issue-card">
@@ -3526,7 +3183,6 @@ async function checkTimeSlotConsistency() {
 // ============================================================
 // Global UI helpers
 // ============================================================
-
 let confirmResolver = null;
 
 function showConfirm(title, text, confirmLabel = "Delete") {
@@ -3569,11 +3225,9 @@ function showNotice(message, type = "info") {
   }, 3000);
 }
 
-
 // ============================================================
 // Manage Programs
 // ============================================================
-
 let editingProgramId = null;
 let programIsAdmin = false;
 
@@ -3586,30 +3240,19 @@ function validateProgramField(fieldId) {
   let errorMsg = "";
 
   if (fieldId === "program_code") {
-    if (!value) {
-      errorMsg = "Program code is required.";
-    } else if (!/^\d{4}$/.test(value)) {
-      errorMsg = "Program code must be 4 digits (e.g., 0105).";
-    }
+    if (!value) errorMsg = "Program code is required.";
+    else if (!/^\d{4}$/.test(value)) errorMsg = "Program code must be 4 digits (e.g., 0105).";
   } else if (fieldId === "program_name") {
-    if (!value) {
-      errorMsg = "Program name is required.";
-    }
+    if (!value) errorMsg = "Program name is required.";
   } else if (fieldId === "department_id") {
-    if (!value) {
-      errorMsg = "Please select a department.";
-    }
+    if (!value) errorMsg = "Please select a department.";
   }
 
   msgEl.textContent = errorMsg;
-  if (errorMsg) {
-    el.classList.add("input-error");
-    return false;
-  }
+  if (errorMsg) { el.classList.add("input-error"); return false; }
   el.classList.remove("input-error");
   return true;
 }
-
 
 async function initProgramsPage() {
   const table = document.getElementById("programTable");
@@ -3636,16 +3279,12 @@ async function initProgramsPage() {
     accessMsg.textContent = "Read-only. Only admins can modify programs.";
   }
 
-  // Load departments
   try {
     const deptRes = await apiFetch(API + "/programs/departments", { headers: { "Authorization": "Bearer " + token } });
     if (deptRes.ok) {
       const depts = await deptRes.json();
       const sel = document.getElementById("department_id");
-      if (sel) {
-        sel.innerHTML = `<option value="">-- Select department --</option>` +
-          depts.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
-      }
+      if (sel) sel.innerHTML = `<option value="">-- Select department --</option>` + depts.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
     }
   } catch (e) { console.error(e); }
 
@@ -3675,7 +3314,7 @@ async function initProgramsPage() {
       program_code: document.getElementById("program_code").value.trim(),
       program_name: document.getElementById("program_name").value.trim(),
       department_id: parseInt(document.getElementById("department_id").value, 10),
-      tracks: document.getElementById("tracks").value.trim() || null, // ★ 新增
+      tracks: document.getElementById("tracks").value.trim() || null,
     };
 
     const url = editingProgramId ? API + "/programs/" + editingProgramId : API + "/programs";
@@ -3718,17 +3357,12 @@ async function loadPrograms() {
 
   tbody.innerHTML = programs.map(p => `
     <tr>
-      <td><span class="badge badge-code">${p.program_code}</span></td>
-      <td><b>${p.program_name}</b></td>
-      <td><span class="badge badge-dept">${p.department_name || "-"}</span></td>
-      <td>${p.tracks ? `<span class="badge" style="background:#dcfce7;color:#166534;">${p.tracks}</span>` : "-"}</td>
+      <td><span class="badge badge-code">${escapeHTML(p.program_code)}</span></td>
+      <td><b>${escapeHTML(p.program_name)}</b></td>
+      <td><span class="badge badge-dept">${escapeHTML(p.department_name || "-")}</span></td>
+      <td>${p.tracks ? `<span class="badge" style="background:#dcfce7;color:#166534;">${escapeHTML(p.tracks)}</span>` : "-"}</td>
       <td>${p.group_count}</td>
-      ${programIsAdmin ? `
-        <td>
-          <button class="btn-edit" onclick="editProgram(${p.id})">Edit</button>
-          <button class="btn-del" onclick="deleteProgram(${p.id})">Delete</button>
-        </td>
-      ` : `<td></td>`}
+      ${programIsAdmin ? `<td><button class="btn-edit" onclick="editProgram(${p.id})">Edit</button><button class="btn-del" onclick="deleteProgram(${p.id})">Delete</button></td>` : `<td></td>`}
     </tr>
   `).join("");
 }
@@ -3743,7 +3377,7 @@ async function editProgram(id) {
   document.getElementById("program_code").value = p.program_code;
   document.getElementById("program_name").value = p.program_name;
   document.getElementById("department_id").value = p.department_id;
-  document.getElementById("tracks").value = p.tracks || ""; // ★ 回填
+  document.getElementById("tracks").value = p.tracks || "";
 
   editingProgramId = id;
   document.getElementById("formTitle").textContent = "Edit Program";
@@ -3751,12 +3385,8 @@ async function editProgram(id) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-
 async function deleteProgram(id) {
-  const ok = await showConfirm(
-    "Delete Program",
-    "Are you sure you want to delete this program? This cannot be undone."
-  );
+  const ok = await showConfirm("Delete Program", "Are you sure you want to delete this program? This cannot be undone.");
   if (!ok) return;
 
   const res = await apiFetch(API + "/programs/" + id, {
@@ -3771,7 +3401,6 @@ async function deleteProgram(id) {
   showNotice("Program deleted", "success");
   loadPrograms();
 }
-
 
 // ============================================================
 // Prepare Scheduling Data (US-12)
@@ -3866,14 +3495,13 @@ async function runValidation() {
       <div class="issue-item ${i.severity}">
         <div class="icon">${icon}</div>
         <div class="body">
-          <span class="type">${i.category}</span>
+          <span class="type">${escapeHTML(i.category)}</span>
           <span>${escapeHTML(i.message)}</span>
         </div>
       </div>
     `;
   }).join("");
 }
-
 
 // ============================================================
 // Shared Sidebar
@@ -3900,7 +3528,6 @@ const SIDEBAR_ITEMS = [
   { href: "/generator.html",        label: "AI Generator",          roles: ["admin"],                       sprint: 3 },
   { href: "/schedule.html",         label: "Schedule Grid",         roles: ["admin"],                       sprint: 3 },
 
-
   // ---- Sprint 4: Interactive Grid & Review (US-17 ~ US-20) ----
   { href: "/personal-timetable.html", label: "My Timetable",        roles: ["teacher", "student"],          sprint: 4 },
   { href: "/room-fitting.html",     label: "Smart Room Fitting",    roles: ["admin"],                       sprint: 4 },
@@ -3911,7 +3538,6 @@ const SIDEBAR_ITEMS = [
 ];
 
 const CURRENT_SPRINT = 3;
-
 const SIDEBAR_ACTIONS = [];
 
 const SIDEBAR_CSS = `
@@ -3982,13 +3608,7 @@ function renderSidebar() {
              onclick="window.location.href='${item.href}'">${item.label}</button>`;
   }).join("");
 
-  const visibleActions = SIDEBAR_ACTIONS.filter(hasRole);
-
-  const actionsHTML = visibleActions.map(a =>
-    `<button onclick="go('${a.action}')">${a.label}</button>`
-  ).join("");
-
-    mount.outerHTML = `
+  mount.outerHTML = `
     <aside class="sidebar">
       <div class="brand">Timetable System</div>
       <h3>Navigation</h3>

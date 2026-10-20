@@ -3,10 +3,10 @@ import secrets
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
-# Set SECRET_KEY in the environment for persistent sessions across restarts.
-SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_urlsafe(48)
+SECRET_KEY = "this_is_a_very_secret_key_for_university_project_2026_do_not_change"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440
 
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{PROJECT_DIR / 'database.db'}")
 

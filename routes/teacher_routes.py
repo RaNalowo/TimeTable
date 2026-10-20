@@ -42,11 +42,14 @@ def teacher_to_dict(t: Teacher, db: Session):
 
 
 @router.get("")
-def list_teachers(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    teachers = db.query(Teacher).order_by(Teacher.full_name).all()
+def list_teachers(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    teachers = db.query(Teacher).all()
+
+    def sort_key(t):
+        is_incomplete = (not t.academic_title or not t.max_weekly_hours or not t.qualified_subjects)
+        return (0 if is_incomplete else 1, t.full_name)
+
+    teachers.sort(key=sort_key)
     return [teacher_to_dict(t, db) for t in teachers]
 
 

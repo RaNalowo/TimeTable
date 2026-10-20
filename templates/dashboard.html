@@ -11,103 +11,133 @@
     header {
       display: flex; justify-content: space-between; align-items: center;
       background: #fff; padding: 16px 24px; border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
-      flex-wrap: wrap; gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px;
     }
-    header h1 { margin: 0; font-size: 20px; }
-    header .user { font-size: 14px; color: #555; margin-top: 4px; }
-    header button {
-      padding: 8px 16px; background: #dc2626; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer;
-    }
-    header button:hover { background: #b91c1c; }
-
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-    .card {
-      background: #fff; padding: 16px; border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    }
-    .card .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-    .card .value { font-size: 22px; font-weight: bold; margin-top: 6px; }
+    header h1 { margin: 0; font-size: 22px; color: #111827; }
 
     .panel {
       background: #fff; padding: 20px; border-radius: 12px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
     }
-    .panel h2 { margin-top: 0; font-size: 16px; }
-    .panel p { margin: 6px 0; font-size: 14px; }
+    .panel h2 { margin-top: 0; font-size: 18px; color: #374151; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
-    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
-    th { background: #f9fafb; font-weight: 600; }
+    .input-field {
+      padding: 8px 10px; border: 1px solid #ccc;
+      border-radius: 6px; font-size: 14px; width: 100%; height: 38px;
+    }
+    .btn-primary {
+      padding: 10px 16px; background: #2563eb; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #1d4ed8; }
 
-    .badge {
-      display: inline-block; padding: 2px 10px; border-radius: 10px;
-      font-size: 12px; background: #e0e7ff; color: #3730a3;
-    }
-
-    #addUserForm { display: grid; gap: 10px; max-width: 420px; }
-    #addUserForm input, #addUserForm select {
-      padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
-    }
-    #addUserForm button {
-      padding: 10px; background: #2563eb; color: #fff;
-      border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
-    }
-    #addUserForm button:hover { background: #1d4ed8; }
-    #addUserMsg { font-size: 13px; min-height: 18px; margin: 0; }
-    #adminUsers { padding-left: 20px; font-size: 14px; }
-
-    @media (max-width: 768px) {
-      header h1 { font-size: 18px; }
-      .card .value { font-size: 18px; }
-    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9fafb; font-weight: 600; color: #4b5563; }
   </style>
 </head>
 <body>
   <div class="app-layout">
     <div id="sidebar-mount"></div>
-    <main class="main-content">
+    <main class="main-content" style="flex: 1; padding: 24px; max-width: 1100px;">
 
       <header>
         <div>
-          <h1 id="welcome">Welcome</h1>
-          <div class="user" id="userInfo">Loading...</div>
+          <h1 id="welcome" style="margin-bottom: 4px;">Welcome</h1>
+          <p id="userInfo" style="color: #6b7280; margin: 0; font-size: 14px;"></p>
         </div>
-        <button onclick="logout()">Logout</button>
+
+        <!-- ★ 加回右上角的退出按钮 -->
+        <button onclick="logout()" style="padding: 8px 16px; background: #fee2e2; color: #dc2626; border: 1px solid #fecaca; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.15s;">
+          Logout
+        </button>
       </header>
 
-      <div class="cards" id="cards"></div>
-
-      <div class="panel" id="rolePanel"></div>
-
-      <div class="panel" id="adminPanel" style="display:none;">
-        <h2>Admin · Add User</h2>
-        <form id="addUserForm">
-          <input id="newEmail" type="email" placeholder="Email" required />
-          <input id="newFullName" placeholder="Full name" required />
-          <input id="newPassword" type="password" placeholder="Password" required />
-          <select id="newRole">
-            <option value="student">Student</option>
-            <option value="teacher">Teacher</option>
-            <option value="admin">Admin</option>
-          </select>
-          <input id="newStudentId" placeholder="Student ID (optional)" />
-          <input id="newEmployeeId" placeholder="Employee ID (optional)" />
-          <button type="submit">Create User</button>
-          <p id="addUserMsg"></p>
-        </form>
-
-        <h2 style="margin-top:24px;">Admin · User List</h2>
-        <button onclick="loadAdminUsers()" style="padding:8px 16px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;">Load Users</button>
-        <ul id="adminUsers"></ul>
+      <!-- 顶部核心指标区 (动态根据角色渲染) -->
+      <div id="kpiGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
       </div>
 
+      <!-- 核心内容展示区 (今日课表 / 冲突信息) -->
+      <div id="rolePanel" class="panel"></div>
+
+      <!-- Admin 专属面板 (包含快捷按钮和添加用户表单) -->
+      <div id="adminPanel" style="display:none;">
+
+        <div class="panel">
+          <h2>Admin Controls</h2>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <a href="/validation.html" class="btn-primary" style="text-decoration:none;">Prepare Data</a>
+            <a href="/generator.html" class="btn-primary" style="text-decoration:none;">AI Generator</a>
+            <a href="/schedule.html" class="btn-primary" style="text-decoration:none;">View Schedule Grid</a>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Admin · Add User</h2>
+          <form id="addUserForm" novalidate style="display:flex; flex-direction:column; gap:12px; max-width:500px;">
+
+            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f9fafb;">
+              <label style="font-size:13px; font-weight:600; color:#555; margin-bottom: 8px; display: block;">1. Select Role</label>
+              <select id="newRole" onchange="toggleUserRoleFields()" class="input-field">
+                <option value="student">Student</option>
+                <option value="teacher">Teacher</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+
+            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f9fafb; display:flex; flex-direction:column; gap:12px;">
+              <label style="font-size:13px; font-weight:600; color:#555;">2. Basic Info</label>
+
+              <div>
+                <input id="newFullName" placeholder="Full Name" class="input-field" />
+                <div class="field-msg" id="newFullNameMsg" style="color:#dc2626; font-size:12px; min-height:16px; margin-top:4px;"></div>
+              </div>
+
+              <div id="emailField" style="display: none;">
+                <div style="display:flex; align-items:center; border: 1px solid #ccc; border-radius: 6px; background:#fff; padding-right:10px; height: 38px;">
+                  <input id="newEmail" placeholder="Email prefix (e.g. john.doe)" style="border:none; outline:none; flex:1; padding: 8px; border-radius: 6px;" />
+                  <span style="color:#888; font-size:14px;">@sdu.edu.kz</span>
+                </div>
+                <div class="field-msg" id="newEmailMsg" style="color:#dc2626; font-size:12px; min-height:16px; margin-top:4px;"></div>
+              </div>
+            </div>
+
+            <div id="studentFields" style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f9fafb; display:flex; flex-direction:column; gap:12px;">
+              <label style="font-size:13px; font-weight:600; color:#555;">3. Student Details</label>
+
+              <div>
+                <input id="newEnrollmentYear" type="number" placeholder="Enrollment Year (e.g. 2026)" class="input-field" />
+                <div class="field-msg" id="newEnrollmentYearMsg" style="color:#dc2626; font-size:12px; min-height:16px; margin-top:4px;"></div>
+              </div>
+
+              <div>
+                <select id="newDepartment" onchange="onAddUserDeptChange()" class="input-field">
+                  <option value="">-- Select department --</option>
+                </select>
+                <div class="field-msg" id="newDepartmentMsg" style="color:#dc2626; font-size:12px; min-height:16px; margin-top:4px;"></div>
+              </div>
+
+              <div>
+                <select id="newProgram" onchange="onAddUserProgChange()" class="input-field">
+                  <option value="">-- Select program --</option>
+                </select>
+                <div class="field-msg" id="newProgramMsg" style="color:#dc2626; font-size:12px; min-height:16px; margin-top:4px;"></div>
+              </div>
+
+              <div>
+                <select id="newTrack" class="input-field">
+                  <option value="">-- Select track --</option>
+                </select>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary" style="padding:12px;">Create User</button>
+          </form>
+          <p id="addUserMsg" style="font-size:14px; font-weight:600; margin-top:12px;"></p>
+        </div>
+
+      </div>
     </main>
   </div>
   <script src="/static/app.js"></script>

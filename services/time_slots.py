@@ -1,5 +1,6 @@
 from db.models import TimeSlot
 
+# 默认时间段
 DEFAULT_SLOTS = [
     "08:30-09:20",
     "09:30-10:20",
@@ -12,7 +13,6 @@ DEFAULT_SLOTS = [
     "16:30-17:20",
     "17:30-18:20",
 ]
-
 
 def get_active_slots(db):
     """Return only configured active slots; never invent schedulable periods."""
