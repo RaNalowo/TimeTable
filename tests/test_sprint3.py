@@ -226,10 +226,34 @@ class Sprint3Tests(unittest.TestCase):
         self.assertEqual(self.request("DELETE", f"/rooms/{self.room_id}").status_code, 409)
         self.assertEqual(self.request("GET", "/rooms").status_code, 200)
 
-    def test_duplicate_student_identifier_is_controlled_error(self):
-        payload = dict(email="first@test.edu", full_name="First", password="Student123!", role="teacher", student_id="S001")
+    def test_duplicate_teacher_email_is_controlled_error(self):
+        payload = dict(email="first", full_name="First", role="teacher")
         self.assertEqual(self.request("POST", "/auth/admin/users", json=payload).status_code, 200)
-        self.assertEqual(self.request("POST", "/auth/admin/users", json={**payload, "email":"second@test.edu"}).status_code, 409)
+        self.assertEqual(self.request("POST", "/auth/admin/users", json=payload).status_code, 400)
+        with self.sessions() as db:
+            self.assertEqual(db.query(User).filter_by(email="first@sdu.edu.kz").count(), 1)
+
+    def test_course_code_qualifications_work_and_do_not_match_partial_codes(self):
+        with self.sessions() as db:
+            db.get(Teacher, self.teacher_id).qualified_subjects = " is101 , IS102 "
+            db.commit()
+        self.assertTrue(self.request("GET", "/validation/report").json()["ok"])
+        self.assertEqual(self.generate().status_code, 200)
+        self.assertEqual(self.request("GET", "/conflicts/scan").json()["error_count"], 0)
+        with self.sessions() as db:
+            db.get(Teacher, self.teacher_id).qualified_subjects = "IS10"
+            db.commit()
+        self.assertFalse(self.request("GET", "/validation/report").json()["ok"])
+        types = {c["type"] for c in self.request("GET", "/conflicts/scan").json()["conflicts"]}
+        self.assertIn("teacher_unqualified", types)
+
+    def test_cleared_teacher_qualifications_are_a_conflict(self):
+        self.add_saved_entry()
+        with self.sessions() as db:
+            db.get(Teacher, self.teacher_id).qualified_subjects = None
+            db.commit()
+        types = {c["type"] for c in self.request("GET", "/conflicts/scan").json()["conflicts"]}
+        self.assertIn("teacher_unqualified", types)
 
     def test_daily_load_and_lunch_are_scanned(self):
         self.add_saved_entry()

@@ -25,7 +25,7 @@ Do not commit real database files or use the sample credentials for deployment.
 
 `python run_demo.py --prepare-only` creates the demo database without starting
 the server. The runner intentionally does not enable auto-reload: restart after
-editing Python files. Sessions expire after 30 minutes; with no SECRET_KEY
+editing Python files. Sessions expire after 24 hours; with no SECRET_KEY
 environment variable configured, restarting the server requires signing in again.
 
 For an independently configured database, set `DATABASE_URL` before running
@@ -105,3 +105,6 @@ publishing, export and personal timetable features are outside these checks.
 AI regression tests cover missing keys, mocked selection/provenance, provider errors,
 invalid/refused responses, coverage guards and input edits during generation.
 They do not verify live model access or billing; that requires a configured key.
+
+Teacher qualifications accept the current course-code format and the legacy
+course-name format, so existing demo databases remain usable after an update.
