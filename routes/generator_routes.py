@@ -1,9 +1,14 @@
 import time
 import math
+import json
+import hashlib
+from typing import Literal
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from fastapi import Body
 
 from db.database import get_db
 from db.models import (
@@ -15,6 +20,9 @@ from db.models import (
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
 from services.scoring import score_schedule
+from services.ai_scheduler import (
+    ai_status, require_ai_key, candidate_fingerprint, candidate_summary, choose_candidate,
+)
 from services.scheduling_data import read_availability, read_lunch
 from services.time_slots import get_active_slots
 from services.semester_logic import (
@@ -207,11 +215,12 @@ def build_room_cache(rooms):
 # Main generator
 # ============================================================
 
-def generate(db):
+def generate(db, strategy="balanced", deadline=None):
     t0 = time.time()
-    TIMEOUT_SECONDS = 60
+    stop_at = min(t0 + 60, deadline) if deadline is not None else t0 + 60
 
     log = []
+    log.append(f"Candidate strategy: {strategy}")
 
     active = get_active_semester(db)
     if not active:
@@ -308,7 +317,7 @@ def generate(db):
     timed_out = False
 
     for idx, session in enumerate(sessions):
-        if (time.time() - t0) > TIMEOUT_SECONDS:
+        if time.time() > stop_at:
             timed_out = True
             failed.extend(sessions[idx:])
             log.append(f"[TIMEOUT] Stopped after {len(placed)} placements.")
@@ -432,6 +441,17 @@ def generate(db):
                             if group_days and day not in group_days:
                                 p += 10 * (w_compact / 10)
 
+                        # Alternate construction policies produce candidates for
+                        # model selection; hard checks above remain identical.
+                        if strategy == "compact":
+                            attended = [parent_group, current_group]
+                            days_used = {d for g in attended for d, _ in mandatory_slots.get(g, set())}
+                            if days_used and day not in days_used:
+                                p += 35
+                            p -= day_load[day] * 3.5
+                        elif strategy == "later_starts":
+                            p += max(0, 2 - slot_i) * 30
+
                         if teacher.id in teacher_avail:
                             pref = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
                             if pref == "preferred":
@@ -538,8 +558,110 @@ def generate(db):
 # Routes
 # ============================================================
 
+class GenerationRequest(BaseModel):
+    mode: Literal["ai_assisted", "heuristic"] = "heuristic"
+    preferences: str = Field(default="", max_length=1500)
+
+
+def scheduling_fingerprint(db):
+    """Detect input edits while candidates or the external AI are running."""
+    inputs = {}
+    for model in [Course, Room, Teacher, StudentGroup, TimeSlot, Constraint,
+                  SoftConstraint, TeacherAvailability]:
+        inputs[model.__tablename__] = [
+            {col.name: getattr(row, col.name) for col in model.__table__.columns}
+            for row in db.query(model).populate_existing().order_by(model.id).all()
+        ]
+    from db.models import Semester
+    inputs["semesters"] = [
+        {col.name: getattr(row, col.name) for col in Semester.__table__.columns}
+        for row in db.query(Semester).populate_existing().order_by(Semester.id).all()
+    ]
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def transient_entries(db, result, semester_id):
+    """Build scan-compatible objects without inserting or deleting any rows."""
+    slots = {s.slot_label: s for s in db.query(TimeSlot).filter_by(is_active=True).all()}
+    courses = {row.id: row for row in db.query(Course).all()}
+    rooms = {row.id: row for row in db.query(Room).all()}
+    teachers = {row.id: row for row in db.query(Teacher).all()}
+    groups = {row.id: row for row in db.query(StudentGroup).all()}
+    entries = []
+    for idx, entry in enumerate(result["entries"], 1):
+        slot = slots.get(entry["time_slot"])
+        if slot is None:
+            raise HTTPException(status_code=409, detail="Time slots changed. Previous timetable was preserved.")
+        entries.append(ScheduleEntry(
+            id=-idx, day=entry["day"], time_slot_id=slot.id, time_slot=slot,
+            course_id=entry["course_id"], course=courses.get(entry["course_id"]),
+            room_id=entry["room_id"], room=rooms.get(entry["room_id"]),
+            teacher_id=entry["teacher_id"], teacher=teachers.get(entry["teacher_id"]),
+            group_id=entry["group_id"], group=groups.get(entry["group_id"]),
+            semester_id=semester_id, sub_group=entry["sub_group"], session_type=entry["session_type"],
+        ))
+    return entries
+
+
+def ai_generation(db, request, active):
+    from routes.conflict_routes import scan_conflicts
+    require_ai_key()  # Fail before spending time constructing candidates.
+    deadline = time.time() + 60
+    candidates, summaries, seen = {}, [], set()
+    slots = get_active_slots(db)
+    for index, strategy in enumerate(["balanced", "compact", "later_starts"], 1):
+        if time.time() > deadline:
+            break
+        result = generate(db, strategy=strategy, deadline=deadline)
+        if not result["entries"]:
+            continue
+        fingerprint = candidate_fingerprint(result["entries"])
+        if fingerprint in seen:
+            continue
+        scan = scan_conflicts(db, entries=transient_entries(db, result, active.id))
+        if scan["error_count"]:
+            continue
+        candidate_id = f"candidate-{index}"
+        seen.add(fingerprint)
+        candidates[candidate_id] = result
+        summaries.append(candidate_summary(candidate_id, strategy, result, slots))
+    if not candidates:
+        raise HTTPException(status_code=409, detail="No conflict-free candidate could be built. Previous timetable was preserved.")
+    decision = choose_candidate(summaries, request.preferences)
+    result = candidates[decision["candidate_id"]]
+    result["generation"] = {
+        "mode": "ai_assisted", "ai_used": True, "preferences": request.preferences,
+        "selection": decision, "candidates": summaries,
+    }
+    result["log"].append(f"[AI] {decision['model']} selected {decision['candidate_id']}: {decision['reason']}")
+    return result
+
+
+@router.get("/ai-status")
+def get_ai_status(admin: User = Depends(require_role("admin"))):
+    return ai_status()
+
+
+@router.get("/last-run")
+def get_last_run(admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+    from db.models import AuditLog
+    active = get_active_semester(db)
+    if not active:
+        return {"generation": None}
+    rows = db.query(AuditLog).filter_by(event="timetable_generated").order_by(AuditLog.id.desc()).all()
+    for row in rows:
+        try:
+            metadata = json.loads(row.detail or "")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(metadata, dict) and metadata.get("semester_id") == active.id:
+            return {"generation": metadata.get("generation"), "generated_at": row.created_at.isoformat()}
+    return {"generation": None}
+
+
 @router.post("/generate")
 def run_generation(
+        data: GenerationRequest | None = Body(default=None),
         admin: User = Depends(require_role("admin")),
         db: Session = Depends(get_db),
 ):
@@ -554,10 +676,23 @@ def run_generation(
     if not report["ok"]:
         raise HTTPException(status_code=400, detail="Fix Prepare Data errors before generating. Previous timetable was preserved.")
 
+    request = data or GenerationRequest()
+    started_at = time.time()
+    original_inputs = scheduling_fingerprint(db)
     try:
-        result = generate(db)
+        result = ai_generation(db, request, active) if request.mode == "ai_assisted" else generate(db)
+        if request.mode == "heuristic":
+            result["generation"] = {
+                "mode": "heuristic", "ai_used": False, "selection": None, "candidates": [],
+                "preferences": "",
+            }
         if not result["entries"]:
             raise HTTPException(status_code=409, detail="No sessions could be scheduled. Previous timetable was preserved.")
+        if scheduling_fingerprint(db) != original_inputs:
+            raise HTTPException(status_code=409, detail="Scheduling data changed during generation. Retry with the updated data. Previous timetable was preserved.")
+        candidate_scan = scan_conflicts(db, entries=transient_entries(db, result, active.id))
+        if candidate_scan["error_count"]:
+            raise HTTPException(status_code=409, detail="Candidate failed conflict validation. Previous timetable was preserved.")
         slot_by_label = {s.slot_label: s.id for s in db.query(TimeSlot).filter_by(is_active=True).all()}
         db.query(ScheduleEntry).filter_by(semester_id=active.id).delete(synchronize_session=False)
         for e in result["entries"]:
@@ -574,8 +709,11 @@ def run_generation(
         if scan["error_count"]:
             raise HTTPException(status_code=409, detail="Generated timetable failed conflict validation. Previous timetable was preserved.")
         result["conflicts"] = scan
+        result["elapsed_seconds"] = round(time.time() - started_at, 3)
         log_event(db, admin.id, "timetable_generated", True,
-                  f"placed={result['placed_count']} failed={result['failed_count']} coverage={result['coverage']}%",
+                  json.dumps({"semester_id": active.id, "placed": result["placed_count"],
+                              "failed": result["failed_count"], "coverage": result["coverage"],
+                              "generation": result["generation"]}),
                   commit=False)
         db.commit()
         return result

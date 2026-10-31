@@ -72,12 +72,11 @@ def _required_seats(e):
     return e.group.student_count
 
 
-def scan_conflicts(db):
-    active = get_active_semester(db)
-    if active:
-        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
-    else:
-        entries = []
+def scan_conflicts(db, entries=None):
+    # Explicit candidate entries let the generator validate before writing data.
+    if entries is None:
+        active = get_active_semester(db)
+        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all() if active else []
 
     rooms = {r.id: r for r in db.query(Room).all()}
     teachers = {t.id: t for t in db.query(Teacher).all()}

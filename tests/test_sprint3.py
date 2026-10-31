@@ -4,6 +4,9 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+import json
+import httpx
 
 _temp = tempfile.TemporaryDirectory(prefix="timetable-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(_temp.name) / 'test.db'}"
@@ -282,6 +285,152 @@ class Sprint3Tests(unittest.TestCase):
         self.assertEqual(data["required_seats"], 16)
         self.assertEqual(data["issues"], [])
         self.assertEqual(self.request("POST", "/room-fitting/check", json={"session_type":"lab", "target_groups":["missing"], "room_id":self.lab_id}).status_code, 400)
+
+    def test_ai_requires_key_and_preserves_existing_schedule(self):
+        original = self.add_saved_entry()
+        with patch.dict(os.environ, {"OPENAI_API_KEY":""}), patch("routes.generator_routes.generate") as build:
+            response = self.request("POST", "/generator/generate", json={"mode":"ai_assisted"})
+        self.assertEqual(response.status_code, 503)
+        build.assert_not_called()
+        with self.sessions() as db:
+            self.assertIsNotNone(db.get(ScheduleEntry, original))
+
+    def test_ai_selection_changes_saved_candidate_and_records_provenance(self):
+        with self.sessions() as db:
+            course = db.get(Course, self.course_id)
+            course.lecture_hours = course.practice_hours = course.lab_hours = 4
+            course.total_hours = 12
+            db.commit()
+        def choose(candidates, preferences):
+            self.assertGreaterEqual(len(candidates), 2)
+            self.assertEqual(preferences, "Prefer compact days")
+            self.assertNotIn("teacher@test.edu", json.dumps(candidates))
+            return dict(candidate_id=candidates[-1]["candidate_id"], reason="Prefer compact days",
+                        tradeoffs=[], provider="OpenAI", model="test-model", response_id="test-response", usage=None)
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}), patch("routes.generator_routes.choose_candidate", side_effect=choose):
+            response = self.request("POST", "/generator/generate", json={"mode":"ai_assisted", "preferences":"Prefer compact days"})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        metadata = result["generation"]
+        self.assertTrue(metadata["ai_used"])
+        selected = next(c for c in metadata["candidates"] if c["candidate_id"] == metadata["selection"]["candidate_id"])
+        self.assertEqual(selected["score"], result["score"])
+        self.assertEqual(self.request("GET", "/conflicts/scan").json()["error_count"], 0)
+        self.assertEqual(self.request("GET", "/generator/last-run").json()["generation"], metadata)
+
+    def test_ai_provider_failure_never_silently_falls_back(self):
+        original = self.add_saved_entry()
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}), patch("routes.generator_routes.choose_candidate", side_effect=HTTPException(502, "AI timeout")):
+            response = self.request("POST", "/generator/generate", json={"mode":"ai_assisted"})
+        self.assertEqual(response.status_code, 502)
+        with self.sessions() as db:
+            self.assertEqual(db.query(ScheduleEntry).count(), 1)
+            self.assertIsNotNone(db.get(ScheduleEntry, original))
+
+    def test_input_change_during_ai_call_preserves_previous_schedule(self):
+        original = self.add_saved_entry()
+        def modify_during_call(candidates, _):
+            with self.sessions() as db:
+                db.get(Room, self.room_id).capacity = 35
+                db.commit()
+            return dict(candidate_id=candidates[0]["candidate_id"], reason="Test", tradeoffs=[], provider="OpenAI", model="test")
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}), patch("routes.generator_routes.choose_candidate", side_effect=modify_during_call):
+            response = self.request("POST", "/generator/generate", json={"mode":"ai_assisted"})
+        self.assertEqual(response.status_code, 409, response.text)
+        with self.sessions() as db:
+            self.assertEqual(db.query(ScheduleEntry).count(), 1)
+            self.assertIsNotNone(db.get(ScheduleEntry, original))
+
+    def test_heuristic_mode_is_explicit_and_makes_no_model_call(self):
+        with patch("services.ai_scheduler.OpenAI") as provider:
+            response = self.generate()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["generation"]["ai_used"])
+        provider.assert_not_called()
+
+    def test_ai_status_never_returns_secret(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}):
+            response = self.request("GET", "/generator/ai-status")
+        self.assertTrue(response.json()["configured"])
+        self.assertNotIn("unit-test-key", response.text)
+        self.assertEqual(self.client.get("/generator/ai-status").status_code, 401)
+
+
+class AIProviderTests(unittest.TestCase):
+    def setUp(self):
+        from services.ai_scheduler import CandidateChoice
+        self.choice_class = CandidateChoice
+        self.candidates = [
+            {"candidate_id":"candidate-1", "placed_count":4, "score":99},
+            {"candidate_id":"candidate-2", "placed_count":5, "score":70},
+        ]
+
+    def invoke(self, *, candidate="candidate-2", status="completed", error=None, parsed=True):
+        from services.ai_scheduler import choose_candidate
+        response = SimpleNamespace(status=status, model="test-model", id="resp_test",
+                                   usage=SimpleNamespace(input_tokens=20, output_tokens=10),
+                                   output_parsed=self.choice_class(candidate_id=candidate, reason="More complete", tradeoffs=["Lower score"]) if parsed else None)
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}), patch("services.ai_scheduler.OpenAI") as constructor:
+            api = constructor.return_value.__enter__.return_value
+            if error:
+                api.responses.parse.side_effect = error
+            else:
+                api.responses.parse.return_value = response
+            result = choose_candidate(self.candidates, "Avoid gaps")
+            self.request_args = api.responses.parse.call_args.kwargs
+            self.client_args = constructor.call_args.kwargs
+            return result
+
+    def test_structured_model_selection_limits_to_maximum_coverage(self):
+        result = self.invoke()
+        self.assertEqual(result["candidate_id"], "candidate-2")
+        sent = json.loads(self.request_args["input"])
+        self.assertEqual(len(sent["eligible_candidates"]), 1)
+        self.assertEqual(sent["eligible_candidates"][0]["candidate_id"], "candidate-2")
+        self.assertFalse(self.request_args["store"])
+        self.assertEqual(self.client_args["max_retries"], 0)
+        self.assertEqual(self.client_args["timeout"], 30)
+        self.assertEqual(self.client_args["base_url"], "https://api.openai.com/v1")
+
+    def test_lower_coverage_choice_rejected(self):
+        with self.assertRaises(HTTPException) as failure:
+            self.invoke(candidate="candidate-1")
+        self.assertEqual(failure.exception.status_code, 502)
+
+    def test_incomplete_and_refused_responses_rejected(self):
+        for status, parsed in [("incomplete",True),("completed",False)]:
+            with self.subTest(status=status, parsed=parsed), self.assertRaises(HTTPException) as failure:
+                self.invoke(status=status, parsed=parsed)
+            self.assertEqual(failure.exception.status_code, 502)
+
+    def test_timeout_and_connection_failures_are_controlled(self):
+        from openai import APITimeoutError, APIConnectionError
+        request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+        for error in [APITimeoutError(request=request), APIConnectionError(request=request)]:
+            with self.subTest(error=type(error).__name__), self.assertRaises(HTTPException) as failure:
+                self.invoke(error=error)
+            self.assertEqual(failure.exception.status_code, 502)
+            self.assertIn("preserved", failure.exception.detail)
+
+    def test_provider_auth_quota_and_status_errors_do_not_leak_secrets(self):
+        from openai import AuthenticationError, RateLimitError, APIStatusError
+        request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+        for cls, status in [(AuthenticationError,401),(RateLimitError,429),(APIStatusError,500)]:
+            response = httpx.Response(status, request=request)
+            error = cls("Sensitive provider response unit-test-key", response=response, body=None)
+            with self.subTest(status=status), self.assertRaises(HTTPException) as failure:
+                self.invoke(error=error)
+            self.assertEqual(failure.exception.status_code, 502)
+            self.assertNotIn("unit-test-key", failure.exception.detail)
+
+    def test_malformed_choice_is_rejected(self):
+        from services.ai_scheduler import choose_candidate
+        with patch.dict(os.environ, {"OPENAI_API_KEY":"unit-test-key"}), patch("services.ai_scheduler.OpenAI") as constructor:
+            api = constructor.return_value.__enter__.return_value
+            api.responses.parse.return_value = SimpleNamespace(status="completed", output_parsed={"candidate_id":"candidate-99", "reason":"Wrong", "tradeoffs":[]})
+            with self.assertRaises(HTTPException) as failure:
+                choose_candidate(self.candidates, "")
+            self.assertEqual(failure.exception.status_code, 502)
 
 
 if __name__ == "__main__":

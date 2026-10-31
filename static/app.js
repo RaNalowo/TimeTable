@@ -1825,6 +1825,64 @@ async function runScorePreview() {
 // AI Timetable Generator (User Story 9)
 // ============================================================
 
+let generatorAIStatus = null;
+let generatorIsAdmin = false;
+let generationInProgress = false;
+
+function updateGenerationMode() {
+  const mode = document.getElementById("generationMode").value;
+  const ai = mode === "ai_assisted";
+  const status = document.getElementById("aiConnectionStatus");
+  document.getElementById("aiPreferences").disabled = !ai || generationInProgress;
+  document.getElementById("aiDataNotice").style.display = ai ? "block" : "none";
+  document.getElementById("generationMode").disabled = generationInProgress;
+  const ready = generatorAIStatus && generatorAIStatus.configured;
+  document.getElementById("generateBtn").disabled = !generatorIsAdmin || generationInProgress || (ai && !ready);
+  if (!ai) {
+    status.textContent = "Algorithm only: no AI model will be called. This mode uses the configured soft-constraint weights.";
+  } else if (!generatorAIStatus) {
+    status.textContent = "AI configuration is unavailable. Retry the page or choose Algorithm only.";
+  } else if (!ready) {
+    status.textContent = "AI is not configured yet. Configure the server API key, then restart and reload. Algorithm only is available separately.";
+  } else {
+    status.textContent = `AI configured: ${generatorAIStatus.provider} / ${generatorAIStatus.model}. Model access is verified when you generate; a successful call may incur API charges.`;
+  }
+}
+
+function renderGenerationMethod(generation) {
+  const panel = document.getElementById("aiDecisionPanel");
+  const box = document.getElementById("aiDecisionBox");
+  panel.style.display = "block";
+  if (!generation) {
+    box.textContent = "This saved draft has no recorded AI selection. Generate in AI-assisted mode to record model usage.";
+    return;
+  }
+  if (!generation.ai_used) {
+    box.textContent = "Algorithm only. No AI model was used for this draft.";
+    return;
+  }
+  const selection = generation.selection;
+  const candidates = generation.candidates || [];
+  box.innerHTML = `
+    <p><b>AI used:</b> ${escapeHTML(selection.provider)} / ${escapeHTML(selection.model)}</p>
+    <p><b>Selected:</b> ${escapeHTML(selection.candidate_id)}</p>
+    <p><b>Reason:</b> ${escapeHTML(selection.reason)}</p>
+    <p><b>Preferences:</b> ${escapeHTML(generation.preferences || "Use configured preferences")}</p>
+    ${(selection.tradeoffs || []).length ? `<p><b>Tradeoffs:</b> ${selection.tradeoffs.map(escapeHTML).join("; ")}</p>` : ""}
+    <p style="font-size:12px;color:#666;">Only candidates with the highest placement count were eligible for AI selection. Scores are soft-preference measures. The model selects from measured candidates; it does not guarantee an optimal timetable.</p>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Candidate</th><th>Strategy</th><th>Coverage</th><th>Score</th><th>Early</th><th>Late</th><th>Gap slots</th><th>Avg days per subgroup</th><th>Selected</th></tr></thead>
+      <tbody>${candidates.map(c => `<tr>
+        <td>${escapeHTML(c.candidate_id)}</td><td>${escapeHTML(c.strategy)}</td>
+        <td>${escapeHTML(c.coverage)}%</td><td>${escapeHTML(c.score)}</td>
+        <td>${escapeHTML(c.early_sessions)}</td><td>${escapeHTML(c.late_sessions)}</td>
+        <td>${escapeHTML(c.gap_slots)}</td><td>${escapeHTML(c.average_days_per_subgroup)}</td>
+        <td>${c.candidate_id === selection.candidate_id ? "AI selected" : "—"}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  `;
+}
+
 async function initGeneratorPage() {
   const btn = document.getElementById("generateBtn");
   if (!btn) return;
@@ -1845,6 +1903,7 @@ async function initGeneratorPage() {
   }
   const me = await meRes.json();
   const isAdmin = me.roles.includes("admin");
+  generatorIsAdmin = isAdmin;
 
   if (!isAdmin) {
     btn.disabled = true;
@@ -1852,7 +1911,16 @@ async function initGeneratorPage() {
     return;
   }
 
-  loadExistingEntries();
+  const aiRes = await apiFetch(API + "/generator/ai-status", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  generatorAIStatus = aiRes.ok ? await aiRes.json() : null;
+  updateGenerationMode();
+  await loadExistingEntries();
+  const lastRun = await apiFetch(API + "/generator/last-run", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (lastRun.ok) renderGenerationMethod((await lastRun.json()).generation);
 }
 
 async function loadExistingEntries() {
@@ -1873,23 +1941,28 @@ async function runGeneration() {
   const progressText = document.getElementById("progressText");
   const statusBanner = document.getElementById("statusBanner");
 
+  const mode = document.getElementById("generationMode").value;
+  const preferences = mode === "ai_assisted" ? document.getElementById("aiPreferences").value.trim() : "";
+  generationInProgress = true;
+  updateGenerationMode();
   btn.disabled = true;
   statusBanner.style.display = "none";
   progressWrap.style.display = "block";
   progressFill.style.width = "0%";
-  progressText.textContent = "Starting generator...";
+  progressFill.style.background = "#2563eb";
+  progressText.textContent = mode === "ai_assisted" ? "Building and checking candidates, then asking AI to select..." : "Building timetable with the algorithm only...";
 
   let pct = 0;
   const timer = setInterval(() => {
     pct = Math.min(pct + 5, 90);
     progressFill.style.width = pct + "%";
-    progressText.textContent = `Generating... ${pct}%`;
   }, 200);
 
   try {
     const res = await apiFetch(API + "/generator/generate", {
       method: "POST",
-      headers: { "Authorization": "Bearer " + getToken() },
+      headers: { "Authorization": "Bearer " + getToken(), "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, preferences }),
     });
     const data = await res.json();
 
@@ -1900,7 +1973,6 @@ async function runGeneration() {
       progressFill.style.background = "#dc2626";
       progressText.textContent = "Failed.";
       showStatusBanner("error", data.detail || "Generation failed");
-      btn.disabled = false;
       return;
     }
 
@@ -1924,15 +1996,18 @@ async function runGeneration() {
     renderGeneratorLog(data.log);
     renderGeneratorEntries(data.entries);
     renderGeneratorFailed(data.failed_sessions);
+    renderGenerationMethod(data.generation);
   } catch (e) {
     clearInterval(timer);
     progressFill.style.width = "100%";
     progressFill.style.background = "#dc2626";
     progressText.textContent = "Network error";
     showStatusBanner("error", "Network error");
+  } finally {
+    clearInterval(timer);
+    generationInProgress = false;
+    updateGenerationMode();
   }
-
-  btn.disabled = false;
 }
 
 function showStatusBanner(type, text) {

@@ -4,3 +4,5 @@ sqlalchemy
 bcrypt
 PyJWT
 python-multipart
+openai>=2,<3
+python-dotenv>=1,<2

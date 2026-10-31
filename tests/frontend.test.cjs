@@ -78,3 +78,57 @@ test('generator table shows group labels for generated and reloaded sessions', (
   assert.match(nodes.entriesBody.innerHTML, /<td>IS-26-BACK<\/td>/);
   assert.match(nodes.entriesBody.innerHTML, /<td>&lt;group&gt;<\/td>/);
 });
+
+function generatorNodes(nodes) {
+  for (const id of ['generationMode', 'aiPreferences', 'aiDataNotice', 'aiConnectionStatus', 'generateBtn', 'aiDecisionPanel', 'aiDecisionBox', 'progressWrap', 'progressFill', 'progressText', 'statusBanner']) {
+    nodes[id] = { style: {}, value: '' };
+  }
+  nodes.generationMode.value = 'ai_assisted';
+}
+
+test('missing API key disables AI generation but permits explicit algorithm mode', () => {
+  const { context, nodes } = setup();
+  generatorNodes(nodes);
+  vm.runInContext('generatorIsAdmin = true; generatorAIStatus = {configured:false};', context);
+  context.updateGenerationMode();
+  assert.equal(nodes.generateBtn.disabled, true);
+  assert.match(nodes.aiConnectionStatus.textContent, /not configured/);
+  nodes.generationMode.value = 'heuristic';
+  context.updateGenerationMode();
+  assert.equal(nodes.generateBtn.disabled, false);
+  assert.equal(nodes.aiPreferences.disabled, true);
+  assert.match(nodes.aiConnectionStatus.textContent, /no AI model/);
+});
+
+test('AI provenance displays escaped model output and marks selected candidate', () => {
+  const { context, nodes } = setup();
+  generatorNodes(nodes);
+  context.renderGenerationMethod({ai_used:true, preferences:'<request>', selection:{provider:'OpenAI', model:'test', candidate_id:'candidate-2', reason:'<script>bad</script>', tradeoffs:['<tradeoff>']}, candidates:[{candidate_id:'candidate-2', strategy:'compact', coverage:100, score:80, early_sessions:0, late_sessions:0, gap_slots:2, average_days_per_subgroup:3}]});
+  assert.match(nodes.aiDecisionBox.innerHTML, /&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.doesNotMatch(nodes.aiDecisionBox.innerHTML, /<script>/);
+  assert.match(nodes.aiDecisionBox.innerHTML, /AI selected/);
+  context.renderGenerationMethod({ai_used:false});
+  assert.match(nodes.aiDecisionBox.textContent, /No AI model/);
+  context.renderGenerationMethod(null);
+  assert.match(nodes.aiDecisionBox.textContent, /no recorded AI selection/);
+});
+
+test('failed AI call restores controls and keeps previous results visible', async () => {
+  let sent;
+  const { context, nodes } = setup(async (_, options) => {
+    sent = JSON.parse(options.body);
+    return new Response(JSON.stringify({detail:'AI request timed out. Previous timetable was preserved.'}), {status:502});
+  });
+  generatorNodes(nodes);
+  nodes.aiPreferences.value = 'Prefer later starts';
+  nodes.entriesBody = {innerHTML:'previous timetable'};
+  context.setInterval = () => 1;
+  context.clearInterval = () => {};
+  vm.runInContext('generatorIsAdmin = true; generatorAIStatus = {configured:true};', context);
+  await context.runGeneration();
+  assert.deepEqual(sent, {mode:'ai_assisted', preferences:'Prefer later starts'});
+  assert.equal(nodes.generateBtn.disabled, false);
+  assert.equal(nodes.generationMode.disabled, false);
+  assert.equal(nodes.entriesBody.innerHTML, 'previous timetable');
+  assert.match(nodes.statusBanner.textContent, /Previous timetable was preserved/);
+});
