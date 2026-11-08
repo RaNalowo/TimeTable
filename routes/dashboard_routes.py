@@ -43,9 +43,12 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
     today = today_abbrev()
     slots = get_active_slots(db) or []
 
-    # 获取当前学期的所有排课
+
     if active:
-        all_entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
+        if "admin" not in roles and not active.is_published:
+            all_entries = []
+        else:
+            all_entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
     else:
         all_entries = []
 

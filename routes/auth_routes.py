@@ -21,14 +21,13 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
-# 修改 Request，不再强制要求 email 和 password
 class CreateUserRequest(BaseModel):
-    role: str  # student | teacher | admin
+    role: str
     full_name: str
-    email: str | None = None  # 仅老师/管理员需要
-    enrollment_year: int | None = None  # 仅学生需要
-    program_id: int | None = None  # 仅学生需要
-    track: str | None = None  # 仅学生需要
+    email: str | None = None
+    enrollment_year: int | None = None
+    program_id: int | None = None
+    track: str | None = None
 
 
 def find_user(db: Session, identifier: str):
@@ -109,7 +108,7 @@ def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)
 
 
 # ============================================================
-# Admin: User Management (核心逻辑)
+# Admin: User Management
 # ============================================================
 
 @router.get("/admin/users")
@@ -134,6 +133,7 @@ def create_user(data: CreateUserRequest, admin: User = Depends(require_role("adm
     student_id = None
     group_id = None
     group_code_str = None
+    sub_group = None # ★ 新增变量
     default_password = "Password123!"
 
     # ================= 如果是学生 =================
@@ -160,6 +160,9 @@ def create_user(data: CreateUserRequest, admin: User = Depends(require_role("adm
         group_code_str = group.group_code
         group.student_count += 1  # ★ 组内人数+1
 
+        # ★ 新增：自动分配一个子组
+        sub_group = str(random.randint(1, group.sub_group_count))
+
         # 2. 生成绝对不重复的学号
         while True:
             rand_digits = random.randint(100, 999)
@@ -178,7 +181,6 @@ def create_user(data: CreateUserRequest, admin: User = Depends(require_role("adm
             raise HTTPException(status_code=400, detail="Email is required for teachers and admins")
 
         raw_email = data.email.strip().lower()
-        # 如果用户多手打了 @sdu.edu.kz，截断它
         if "@" in raw_email:
             raw_email = raw_email.split("@")[0]
 
@@ -198,6 +200,7 @@ def create_user(data: CreateUserRequest, admin: User = Depends(require_role("adm
         student_id=student_id,
         employee_id=None,
         group_id=group_id,
+        sub_group=sub_group, # ★ 新增：存入子组
     )
     user.roles.append(role)
     db.add(user)
@@ -225,7 +228,8 @@ def create_user(data: CreateUserRequest, admin: User = Depends(require_role("adm
         "user": {
             "email": user.email,
             "student_id": student_id,
-            "group_code": group_code_str,  # ★ 把组名返回给前端
+            "group_code": group_code_str,
+            "sub_group": sub_group, # ★ 把子组也返回给前端展示
             "default_password": default_password
         }
     }

@@ -52,15 +52,10 @@ REQUIRED_EQUIPMENT_GROUPS = {
 }
 
 
-# ============================================================
-# Target group resolution
-# ============================================================
-
 def resolve_target_groups(db, course, semester):
     course_year, course_term = parse_semester_level(course.semester_level)
     if course_year is None:
         return []
-
     if course_term != semester.term:
         return []
 
@@ -76,13 +71,8 @@ def resolve_target_groups(db, course, semester):
             if g.track != course.track:
                 continue
         matched.append(g)
-
     return matched
 
-
-# ============================================================
-# Helpers
-# ============================================================
 
 def expand_sessions(db, courses, semester):
     sessions = []
@@ -103,34 +93,35 @@ def expand_sessions(db, courses, semester):
                 "sub_group_count": g.sub_group_count,
             }
 
-            # 1. Lecture (大组)
-            for _ in range(c.lecture_hours or 0):
+            # 1. Lecture (大组) - 连堂
+            if (c.lecture_hours or 0) > 0:
                 sessions.append({
                     **base, "session_type": "lecture", "group_code": g.group_code,
-                    "sub_group": None, "required_seats": g.student_count
+                    "sub_group": None, "required_seats": g.student_count,
+                    "block_size": c.lecture_hours
                 })
 
-            # 2. Practice (子组)
+            # 2. Practice (子组) - 连堂
             if (c.practice_hours or 0) > 0:
                 sub_size = math.ceil(g.student_count / max(g.sub_group_count, 1))
                 for sub_idx in range(g.sub_group_count):
                     sub_code = f"{g.group_code}-{sub_idx + 1}"
-                    for _ in range(c.practice_hours):
-                        sessions.append({
-                            **base, "session_type": "practice", "group_code": sub_code,
-                            "sub_group": str(sub_idx + 1), "required_seats": sub_size
-                        })
+                    sessions.append({
+                        **base, "session_type": "practice", "group_code": sub_code,
+                        "sub_group": str(sub_idx + 1), "required_seats": sub_size,
+                        "block_size": c.practice_hours
+                    })
 
-            # 3. Lab (子组)
+            # 3. Lab (子组) - 连堂
             if (c.lab_hours or 0) > 0:
                 sub_size = math.ceil(g.student_count / max(g.sub_group_count, 1))
                 for sub_idx in range(g.sub_group_count):
                     sub_code = f"{g.group_code}-{sub_idx + 1}"
-                    for _ in range(c.lab_hours):
-                        sessions.append({
-                            **base, "session_type": "lab", "group_code": sub_code,
-                            "sub_group": str(sub_idx + 1), "required_seats": sub_size
-                        })
+                    sessions.append({
+                        **base, "session_type": "lab", "group_code": sub_code,
+                        "sub_group": str(sub_idx + 1), "required_seats": sub_size,
+                        "block_size": c.lab_hours
+                    })
 
     return sessions
 
@@ -161,7 +152,6 @@ def slot_overlaps_lunch(slot, lunch_start, lunch_end):
 
 
 def build_teacher_cache(courses, teachers):
-    """★ 修改点：缓存键改为 course_code"""
     cache = {}
     for c in courses:
         if c.course_code in cache:
@@ -179,13 +169,10 @@ def build_room_cache(rooms):
     return cache
 
 
-# ============================================================
-# Main generator
-# ============================================================
-
 def generate(db, strategy="balanced", deadline=None):
     t0 = time.time()
-    stop_at = min(t0 + 60, deadline) if deadline is not None else t0 + 60
+    default_timeout = 600 if deadline is None else 300
+    stop_at = min(t0 + default_timeout, deadline) if deadline is not None else t0 + default_timeout
 
     log = []
     log.append(f"Candidate strategy: {strategy}")
@@ -211,26 +198,23 @@ def generate(db, strategy="balanced", deadline=None):
 
     teacher_cache = build_teacher_cache(courses, teachers)
     room_cache = build_room_cache(rooms)
-    log.append(
-        f"Cached {len(teacher_cache)} course→teacher maps, {sum(len(v) for v in room_cache.values())} room candidates")
 
     sessions = expand_sessions(db, courses, active)
     total_sessions = len(sessions)
     log.append(f"Expanded {len(courses)} courses into {total_sessions} sessions.")
 
     if total_sessions == 0:
-        raise HTTPException(status_code=400,
-                            detail="No courses match the active semester, program, year and track. Previous timetable was preserved.")
+        raise HTTPException(status_code=400, detail="No courses match the active semester.")
 
     sessions.sort(key=lambda s: (
-        0 if s["session_type"] == "lab" else (1 if s["session_type"] == "practice" else 2),
-    ))
+        s["block_size"],
+        0 if s["session_type"] == "lab" else (1 if s["session_type"] == "practice" else 2)
+    ), reverse=True)
 
     hard = {c.constraint_type: c for c in db.query(Constraint).all()}
     lunch_cfg = None
     if hard.get("lunch_break") and hard["lunch_break"].is_active:
         lunch_cfg = read_lunch(hard["lunch_break"].config_json)
-        log.append(f"Lunch break: {lunch_cfg.get('start')}-{lunch_cfg.get('end')}")
 
     soft_rows = {c.constraint_key: c for c in db.query(SoftConstraint).all()}
 
@@ -270,12 +254,12 @@ def generate(db, strategy="balanced", deadline=None):
             log.append(f"[TIMEOUT] Stopped after {len(placed)} placements.")
             break
 
+        block_size = session.get("block_size", 1)
         required_seats = session["required_seats"]
         parent_group = session["parent_group_code"]
         current_group = session["group_code"]
         is_elective = session["is_elective"]
 
-        # ★ 修改点：使用 course_code 获取老师
         candidates_teachers = teacher_cache.get(session["course_code"], [])
         if not candidates_teachers:
             failed.append(session)
@@ -294,81 +278,80 @@ def generate(db, strategy="balanced", deadline=None):
         best_penalty = float("inf")
 
         for day in DAYS:
-            for slot in slots:
+            for start_i in range(len(slots) - block_size + 1):
+                block_slots = slots[start_i: start_i + block_size]
+
+                if lunch_cfg and day in lunch_cfg.get("days", []):
+                    if any(slot_overlaps_lunch(s, lunch_cfg["start"], lunch_cfg["end"]) for s in block_slots):
+                        continue
+
                 for room in candidates_rooms:
                     if room.capacity < required_seats:
                         continue
-                    if (day, slot) in room_slots[room.id]:
+                    if any((day, s) in room_slots[room.id] for s in block_slots):
                         continue
 
                     for teacher in candidates_teachers:
-                        if (day, slot) in teacher_slots[teacher.id]:
+                        if any((day, s) in teacher_slots[teacher.id] for s in block_slots):
                             continue
-                        if teacher_hours[teacher.id] >= teacher.max_weekly_hours:
+                        if teacher_hours[teacher.id] + block_size > teacher.max_weekly_hours:
                             continue
-                        if teacher_daily[teacher.id][day] >= teacher.max_daily_hours:
+                        if teacher_daily[teacher.id][day] + block_size > teacher.max_daily_hours:
                             continue
 
                         if teacher.id in teacher_avail:
-                            st_status = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
-                            if st_status == "blocked":
+                            if any(teacher_avail[teacher.id].get(day, {}).get(s, "neutral") == "blocked" for s in
+                                   block_slots):
                                 continue
 
                         group_busy = False
-                        check_groups = [parent_group]
-                        if current_group != parent_group:
-                            check_groups.append(current_group)
+                        check_groups = [parent_group, current_group] if current_group != parent_group else [
+                            parent_group]
 
-                        for g in check_groups:
-                            if (day, slot) in mandatory_slots.get(g, set()):
-                                group_busy = True
-                                break
-
-                        if not group_busy and not is_elective:
+                        # 正常的互斥判断（大班和子组互不干扰）
+                        for s in block_slots:
                             for g in check_groups:
-                                if (day, slot) in elective_slots.get(g, set()):
+                                if (day, s) in mandatory_slots.get(g, set()):
+                                    group_busy = True
+                                    break
+                                if not is_elective and (day, s) in elective_slots.get(g, set()):
                                     group_busy = True
                                     break
 
-                        if not group_busy and session["session_type"] == "lecture":
-                            for i in range(1, session["sub_group_count"] + 1):
-                                subgroup = f"{parent_group}-{i}"
-                                busy = (day, slot) in mandatory_slots.get(subgroup, set())
-                                if not is_elective:
-                                    busy = busy or (day, slot) in elective_slots.get(subgroup, set())
-                                if busy:
-                                    group_busy = True
-                                    break
+                            if session["session_type"] == "lecture":
+                                for i in range(1, session["sub_group_count"] + 1):
+                                    subgroup = f"{parent_group}-{i}"
+                                    if (day, s) in mandatory_slots.get(subgroup, set()) or (
+                                            not is_elective and (day, s) in elective_slots.get(subgroup, set())):
+                                        group_busy = True
+                                        break
+                            if group_busy:
+                                break
 
                         if group_busy:
                             continue
-
-                        if lunch_cfg and day in lunch_cfg.get("days", []):
-                            if slot_overlaps_lunch(slot, lunch_cfg["start"], lunch_cfg["end"]):
-                                continue
 
                         p = 0.0
                         p += day_load[day] * 4
                         n = len(slots)
                         mid = (n - 1) / 2
-                        slot_i = slot_idx[slot]
-                        edge_distance = abs(slot_i - mid)
+                        center_slot_i = start_i + (block_size - 1) / 2.0
+                        edge_distance = abs(center_slot_i - mid)
 
                         if w_early > 0:
-                            p += (n - 1 - slot_i) * 6 * (w_early / 10)
+                            p += (n - 1 - start_i) * 6 * (w_early / 10)
                         if w_late > 0:
-                            p += slot_i * 6 * (w_late / 10)
+                            p += start_i * 6 * (w_late / 10)
 
                         p -= (mid - edge_distance) * 1.5
 
                         if w_gaps > 0:
-                            current_i = slot_idx[slot]
                             taken = [
                                 slot_idx[s] for (d, s) in mandatory_slots.get(current_group, set())
                                 if d == day and s in slot_idx
                             ]
                             if taken:
-                                min_dist = min(abs(current_i - t) for t in taken)
+                                min_dist = min(abs(start_i - t) for t in taken)
                                 if min_dist > 1:
                                     p += 15 * (w_gaps / 10)
 
@@ -377,8 +360,6 @@ def generate(db, strategy="balanced", deadline=None):
                             if group_days and day not in group_days:
                                 p += 10 * (w_compact / 10)
 
-                        # Alternate construction policies produce candidates for
-                        # model selection; hard checks above remain identical.
                         if strategy == "compact":
                             attended = [parent_group, current_group]
                             days_used = {d for g in attended for d, _ in mandatory_slots.get(g, set())}
@@ -386,16 +367,16 @@ def generate(db, strategy="balanced", deadline=None):
                                 p += 35
                             p -= day_load[day] * 3.5
                         elif strategy == "later_starts":
-                            p += max(0, 2 - slot_i) * 30
+                            p += max(0, 2 - start_i) * 30
 
                         if teacher.id in teacher_avail:
-                            pref = teacher_avail[teacher.id].get(day, {}).get(slot, "neutral")
+                            pref = teacher_avail[teacher.id].get(day, {}).get(block_slots[0], "neutral")
                             if pref == "preferred":
                                 p -= 5
 
                         if p < best_penalty:
                             best_penalty = p
-                            best = (day, slot, room, teacher)
+                            best = (day, block_slots, room, teacher)
                             if p <= -1:
                                 break
                     if best and best_penalty <= -1:
@@ -407,44 +388,46 @@ def generate(db, strategy="balanced", deadline=None):
 
         if not best:
             failed.append(session)
-            log.append(f"[FAIL] {session['course_code']} ({session['session_type']}) [{current_group}]")
+            log.append(
+                f"[FAIL] {session['course_code']} ({session['session_type']}) [{current_group}] — cannot find {block_size} consecutive slot(s)")
             continue
 
-        day, slot, room, teacher = best
+        day, block_slots, room, teacher = best
 
-        room_slots[room.id].add((day, slot))
-        teacher_slots[teacher.id].add((day, slot))
+        # 正常的资源占用，不再强制大班互斥
+        for s in block_slots:
+            room_slots[room.id].add((day, s))
+            teacher_slots[teacher.id].add((day, s))
 
-        occupied = elective_slots if is_elective else mandatory_slots
-        occupied.setdefault(current_group, set()).add((day, slot))
+            occupied = elective_slots if is_elective else mandatory_slots
+            occupied.setdefault(current_group, set()).add((day, s))
 
-        teacher_hours[teacher.id] += 1
-        teacher_daily[teacher.id][day] += 1
-        day_load[day] += 1
+        teacher_hours[teacher.id] += block_size
+        teacher_daily[teacher.id][day] += block_size
+        day_load[day] += block_size
 
-        placed.append({
-            "day": day, "time_slot": slot, "room_id": room.id, "room_code": room.room_code,
-            "teacher_id": teacher.id, "teacher_name": teacher.full_name,
-            "course_id": session["course_id"], "course_code": session["course_code"],
-            "course_name": session["course_name"], "session_type": session["session_type"],
-            "group_id": session["group_id"], "sub_group": session["sub_group"],
-            "group_code": current_group,
-            "attendee_groups": ([current_group] if session["sub_group"] else
-                                [f"{parent_group}-{i}" for i in range(1, session["sub_group_count"] + 1)]),
-        })
+        for s in block_slots:
+            placed.append({
+                "day": day, "time_slot": s, "room_id": room.id, "room_code": room.room_code,
+                "teacher_id": teacher.id, "teacher_name": teacher.full_name,
+                "course_id": session["course_id"], "course_code": session["course_code"],
+                "course_name": session["course_name"], "session_type": session["session_type"],
+                "group_id": session["group_id"], "sub_group": session["sub_group"],
+                "group_code": current_group,
+                "attendee_groups": ([current_group] if session["sub_group"] else
+                                    [f"{parent_group}-{i}" for i in range(1, session["sub_group_count"] + 1)]),
+            })
 
         log.append(
-            f"[OK] {session['course_code']} ({session['session_type']}) → {day} {slot}, {room.room_code}, {teacher.full_name} [{current_group}]")
+            f"[OK] {session['course_code']} ({session['session_type']}) → {day} {block_slots[0]}~{block_slots[-1]}, {room.room_code}, {teacher.full_name} [{current_group}]")
 
     elapsed = round(time.time() - t0, 3)
     log.append(f"Finished in {elapsed}s")
-    log.append(f"Placed: {len(placed)}, Failed: {len(failed)}")
+    log.append(f"Placed: {len(placed)} entries, Failed: {len(failed)} sessions")
 
     evaluation = score_schedule(db, placed)
     coverage = round(len(placed) / total_sessions * 100, 1) if total_sessions else 100
     status = "success" if not failed else ("partial" if placed else "failed")
-
-    log.append(f"Coverage: {coverage}%  ({len(placed)}/{total_sessions})")
 
     return {
         "status": status, "placed_count": len(placed), "failed_count": len(failed),
@@ -453,13 +436,10 @@ def generate(db, strategy="balanced", deadline=None):
         "log": log, "entries": placed,
         "failed_sessions": [
             {"course_code": s["course_code"], "session_type": s["session_type"], "group_code": s["group_code"]} for s in
-            failed[:50]],
+            failed[:50]
+        ],
     }
 
-
-# ============================================================
-# Routes
-# ============================================================
 
 class GenerationRequest(BaseModel):
     mode: Literal["ai_assisted", "heuristic"] = "heuristic"
@@ -467,7 +447,6 @@ class GenerationRequest(BaseModel):
 
 
 def scheduling_fingerprint(db):
-    """Detect input edits while candidates or the external AI are running."""
     inputs = {}
     for model in [Course, Room, Teacher, StudentGroup, TimeSlot, Constraint,
                   SoftConstraint, TeacherAvailability]:
@@ -484,7 +463,6 @@ def scheduling_fingerprint(db):
 
 
 def transient_entries(db, result, semester_id):
-    """Build scan-compatible objects without inserting or deleting any rows."""
     slots = {s.slot_label: s for s in db.query(TimeSlot).filter_by(is_active=True).all()}
     courses = {row.id: row for row in db.query(Course).all()}
     rooms = {row.id: row for row in db.query(Room).all()}
@@ -508,8 +486,8 @@ def transient_entries(db, result, semester_id):
 
 def ai_generation(db, request, active):
     from routes.conflict_routes import scan_conflicts
-    require_ai_key()  # Fail before spending time constructing candidates.
-    deadline = time.time() + 60
+    require_ai_key()
+    deadline = time.time() + 240
     candidates, summaries, seen = {}, [], set()
     slots = get_active_slots(db)
     for index, strategy in enumerate(["balanced", "compact", "later_starts"], 1):
@@ -529,7 +507,8 @@ def ai_generation(db, request, active):
         candidates[candidate_id] = result
         summaries.append(candidate_summary(candidate_id, strategy, result, slots))
     if not candidates:
-        raise HTTPException(status_code=409, detail="No conflict-free candidate could be built. Previous timetable was preserved.")
+        raise HTTPException(status_code=409,
+                            detail="No conflict-free candidate could be built. Previous timetable was preserved.")
     decision = choose_candidate(summaries, request.preferences)
     result = candidates[decision["candidate_id"]]
     result["generation"] = {
@@ -591,16 +570,22 @@ def run_generation(
                 "preferences": "",
             }
         if not result["entries"]:
-            raise HTTPException(status_code=409, detail="No sessions could be scheduled. Previous timetable was preserved.")
+            raise HTTPException(status_code=409,
+                                detail="No sessions could be scheduled. Previous timetable was preserved.")
         if scheduling_fingerprint(db) != original_inputs:
-            raise HTTPException(status_code=409, detail="Scheduling data changed during generation. Retry with the updated data. Previous timetable was preserved.")
+            raise HTTPException(status_code=409,
+                                detail="Scheduling data changed during generation. Retry with the updated data. Previous timetable was preserved.")
+
         candidate_scan = scan_conflicts(db, entries=transient_entries(db, result, active.id))
         if candidate_scan["error_count"]:
-            raise HTTPException(status_code=409, detail="Candidate failed conflict validation. Previous timetable was preserved.")
+            raise HTTPException(status_code=409,
+                                detail="Candidate failed conflict validation. Previous timetable was preserved.")
+
         slot_by_label = {s.slot_label: s.id for s in db.query(TimeSlot).filter_by(is_active=True).all()}
         db.query(ScheduleEntry).filter_by(semester_id=active.id).delete(synchronize_session=False)
 
-        # ★ 修改点：写入 sub_group
+        active.is_published = False
+
         for e in result["entries"]:
             slot_id = slot_by_label.get(e["time_slot"])
             if slot_id is None:

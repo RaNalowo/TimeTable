@@ -8,13 +8,12 @@ from typing import Literal
 from db.database import get_db
 from db.models import (
     ScheduleEntry, Room, StudentGroup, User, Course, Teacher, TimeSlot,
-    TeacherAvailability,
+    TeacherAvailability, Semester, Constraint
 )
 from routes.auth_routes import get_current_user, require_role
 from services.audit import log_event
 from services.qualifications import teacher_qualified
 from services.scheduling_data import read_availability, read_lunch
-from db.models import Semester, Constraint
 from services.time_slots import get_active_slots
 from services.semester_logic import get_active_semester
 
@@ -61,7 +60,6 @@ def _required_seats(e):
 
 
 def scan_conflicts(db, entries=None):
-    # Explicit candidate entries let the generator validate before writing data.
     if entries is None:
         active = get_active_semester(db)
         entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all() if active else []
@@ -191,7 +189,6 @@ def scan_conflicts(db, entries=None):
                 f"Teacher {t.full_name} has {hours}h > max {t.max_weekly_hours}h",
                 {"teacher": t.full_name, "hours": hours, "max": t.max_weekly_hours})
 
-    # ★ 修改点：老师资质检查使用 ccode
     for e in entries:
         if not e.teacher_id or not e.course: continue
         t = teachers.get(e.teacher_id)
@@ -234,66 +231,79 @@ def scan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return scan_conflicts(db)
 
 
+@router.post("/publish")
+def publish_timetable(admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+    active = get_active_semester(db)
+    if not active:
+        raise HTTPException(status_code=400, detail="No active semester.")
+
+    conflict_info = scan_conflicts(db)
+    if conflict_info["error_count"] > 0:
+        raise HTTPException(status_code=400, detail="Cannot publish a timetable with conflicts. Fix errors first.")
+
+    active.is_published = True
+    db.commit()
+    log_event(db, admin.id, "timetable_published", True)
+    return {"message": "Timetable published successfully."}
+
+
 @router.get("/grid")
 def grid(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     active = get_active_semester(db)
     slots = get_active_slots(db)
-
-    # 1. 取出当前学期的所有课表
-    if active:
-        entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()
-    else:
-        entries = []
-
-    # ★ 2. 核心改动：根据当前登录用户的角色进行数据隔离
     roles = [r.name for r in user.roles]
+
+    is_published = active.is_published if active else False
+
+    if "admin" not in roles and not is_published:
+        return {
+            "days": DAYS, "time_slots": slots,
+            "cells": [{"day": d, "time_slot": s, "entries": []} for d in DAYS for s in slots],
+            "conflicts": [], "error_count": 0, "warning_count": 0, "total_entries": 0, "published": False
+        }
+
+    entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all() if active else []
 
     if "admin" not in roles:
         if "teacher" in roles:
-            # 如果是老师，只能看到自己教的课
             teacher = db.query(Teacher).filter((Teacher.user_id == user.id) | (Teacher.email == user.email)).first()
             if teacher:
                 entries = [e for e in entries if e.teacher_id == teacher.id]
             else:
                 entries = []
         elif "student" in roles:
-            # 如果是学生，只能看到自己所在 Group 的课
             if user.group_id:
-                entries = [e for e in entries if e.group_id == user.group_id]
+                # ★ 大课全看，实验/实践只看自己所在组的！(同时兼容以前数据 sub_group 为空的)
+                entries = [
+                    e for e in entries
+                    if e.group_id == user.group_id and
+                    (e.session_type == 'lecture' or e.sub_group == user.sub_group or e.sub_group is None)
+                ]
             else:
                 entries = []
 
-    # 3. 后面的渲染逻辑保持不变
     conflict_info = scan_conflicts(db)
     conflicting_ids = set(conflict_info["conflicting_entry_ids"])
 
     cell_map = {}
     for e in entries:
         label = _slot_label(e)
-        if not label:
-            continue
+        if not label: continue
         key = f"{e.day}|{label}"
         cell_map.setdefault(key, []).append({
-            "id": e.id,
-            "course_code": _course_code(e),
-            "session_type": e.session_type,
-            "room_code": _room_code(e),
-            "teacher_name": _teacher_name(e),
-            "target_groups": _group_code(e),
-            "has_conflict": e.id in conflicting_ids,
+            "id": e.id, "course_code": _course_code(e), "session_type": e.session_type,
+            "room_code": _room_code(e), "teacher_name": _teacher_name(e),
+            "target_groups": _group_code(e), "has_conflict": e.id in conflicting_ids,
         })
 
     grid_data = [{"day": day, "time_slot": slot, "entries": cell_map.get(f"{day}|{slot}", [])} for day in DAYS for slot
                  in slots]
 
     return {
-        "days": DAYS,
-        "time_slots": slots,
-        "cells": grid_data,
-        "conflicts": conflict_info["conflicts"],
-        "error_count": conflict_info["error_count"],
-        "warning_count": conflict_info["warning_count"],
-        "total_entries": len(entries),  # 注意这里要改成过滤后的数量
+        "days": DAYS, "time_slots": slots, "cells": grid_data,
+        "conflicts": conflict_info["conflicts"], "error_count": conflict_info["error_count"],
+        "warning_count": conflict_info["warning_count"], "total_entries": len(entries),
+        "published": is_published
     }
 
 
@@ -313,12 +323,18 @@ def move_entry(entry_id: int, data: MoveRequest, admin: User = Depends(require_r
     if data.time_slot not in slots: raise HTTPException(status_code=400, detail="Invalid time slot")
     slot = db.query(TimeSlot).filter_by(slot_label=data.time_slot).first()
     if not slot: raise HTTPException(status_code=400, detail="Time slot not found in DB")
+
     entry.day = data.day
     entry.time_slot_id = slot.id
     if data.room_id is not None:
         room = db.query(Room).filter_by(id=data.room_id).first()
         if not room: raise HTTPException(status_code=400, detail="Room not found")
         entry.room_id = room.id
+
+    active = get_active_semester(db)
+    if active:
+        active.is_published = False
+
     db.commit()
     log_event(db, admin.id, "entry_moved", True, f"entry_id={entry_id}")
     return {"message": "Entry moved successfully", "scan": scan_conflicts(db)}
@@ -359,8 +375,8 @@ def create_entry(data: CreateEntryRequest, admin: User = Depends(require_role("a
         room_id=data.room_id, teacher_id=data.teacher_id, group_id=data.group_id, sub_group=data.sub_group,
         semester_id=active.id,
     )
-    db.add(entry);
-    db.commit();
+    db.add(entry)
+    db.commit()
     db.refresh(entry)
     log_event(db, admin.id, "entry_created", True, f"entry_id={entry.id}")
     return {"message": "Entry created", "entry_id": entry.id, "scan": scan_conflicts(db)}
@@ -370,11 +386,16 @@ def create_entry(data: CreateEntryRequest, admin: User = Depends(require_role("a
 def delete_entry(entry_id: int, admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     entry = db.query(ScheduleEntry).filter_by(id=entry_id).first()
     if not entry: raise HTTPException(status_code=404, detail="Entry not found")
-    db.delete(entry);
+
+    db.delete(entry)
+
+    active = get_active_semester(db)
+    if active:
+        active.is_published = False
+
     db.commit()
     log_event(db, admin.id, "entry_deleted", True, f"entry_id={entry_id}")
     return {"message": "Entry deleted", "scan": scan_conflicts(db)}
-
 
 class SwapRequest(BaseModel):
     entry_id_a: int
@@ -388,10 +409,15 @@ def swap_entries(data: SwapRequest, admin: User = Depends(require_role("admin"))
     if not a or not b: raise HTTPException(status_code=404, detail="One or both entries not found")
     if a.semester_id != b.semester_id: raise HTTPException(status_code=400,
                                                            detail="Cannot swap sessions from different semesters")
+
     a.day, b.day = b.day, a.day
     a.time_slot_id, b.time_slot_id = b.time_slot_id, a.time_slot_id
     a.room_id, b.room_id = b.room_id, a.room_id
+
+    active = get_active_semester(db)
+    if active:
+        active.is_published = False
+
     db.commit()
-    log_event(db, admin.id, "entry_swapped", True,
-              f"{data.entry_id_a} <-> {data.entry_id_b}")
+    log_event(db, admin.id, "entry_swapped", True, f"{data.entry_id_a} <-> {data.entry_id_b}")
     return {"message": "Entries swapped", "scan": scan_conflicts(db)}

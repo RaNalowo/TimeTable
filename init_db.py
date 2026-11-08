@@ -1,6 +1,7 @@
 import os
 import json
 import csv
+import random
 
 from db.database import Base, engine, SessionLocal
 from db.models import (
@@ -342,26 +343,30 @@ def load_users_from_csv(path="users.csv"):
 
             # 如果学生填了 group_code，就去库里反查 group_id
             group_id = None
+            sub_group = None  # ★ 新增变量
             if row.get("group_code"):
                 g = db.query(StudentGroup).filter_by(group_code=row["group_code"].strip()).first()
                 if g:
                     group_id = g.id
+                    # ★ 核心逻辑：根据该组的子组数量，随机分配一个子组（1, 2, 3...）
+                    sub_group = str(random.randint(1, g.sub_group_count))
 
             u = User(
                 email=email,
                 full_name=row["full_name"].strip(),
-                password_hash=hash_password(default_pwd),  # ★ 统一分配初始密码
+                password_hash=hash_password(default_pwd),
                 status="active",
                 student_id=row.get("student_id", "").strip() or None,
                 employee_id=row.get("employee_id", "").strip() or None,
                 group_id=group_id,
+                sub_group=sub_group,  # ★ 传入子组
             )
             u.roles.append(role)
             db.add(u)
             count += 1
 
     db.commit()
-    print(f"Imported {count} users from CSV (Default passwords assigned)")
+    print(f"Imported {count} users from CSV (Default passwords & Sub-groups assigned)")
 
 
 load_users_from_csv()

@@ -2062,7 +2062,7 @@ function renderGeneratorFailed(failed) {
 }
 
 // ============================================================
-// Real-Time Conflict Detection (Merged Filtering logic)
+// Real-Time Conflict Detection
 // ============================================================
 let scheduleData = { days: [], time_slots: [], cells: [], conflicts: [] };
 let roomsCache = [];
@@ -2072,6 +2072,8 @@ let draggingEntryId = null;
 let pendingSwap = null;
 let scheduleGroupsCache = [];
 let currentProgramFilter = "all";
+let currentViewMode = "weekly";
+let currentDayFilter = "Mon";
 
 function getProgramForGroup(groupCode) {
   if (!groupCode) return null;
@@ -2084,6 +2086,30 @@ async function refreshGrid() {
   const res = await apiFetch(API + "/conflicts/grid", { headers: { "Authorization": "Bearer " + getToken() } });
   if (!res.ok) { console.error("Failed to load grid"); return; }
   scheduleData = await res.json();
+
+  const statusBadge = document.getElementById("publishStatus");
+  const publishBtn = document.getElementById("publishBtn");
+
+  if (scheduleIsAdmin) {
+      publishBtn.style.display = "inline-block";
+      if (scheduleData.published) {
+          publishBtn.style.display = "none";
+          statusBadge.style.display = "inline-block";
+          statusBadge.className = "badge";
+          statusBadge.style.background = "#dcfce7";
+          statusBadge.style.color = "#166534";
+          statusBadge.textContent = "✅ Published";
+      } else {
+          statusBadge.style.display = "inline-block";
+          statusBadge.className = "badge";
+          statusBadge.style.background = "#fef3c7";
+          statusBadge.style.color = "#92400e";
+          statusBadge.textContent = "📝 Draft (Unpublished)";
+      }
+  } else {
+      publishBtn.style.display = "none";
+  }
+
   renderScheduleGrid();
   renderConflicts();
   updateBanner();
@@ -2091,6 +2117,41 @@ async function refreshGrid() {
 
 async function rescanConflicts() {
   await refreshGrid();
+}
+
+async function publishTimetable() {
+    const ok = await showConfirm(
+        "Publish Timetable",
+        "Are you sure you want to publish this timetable? Students and teachers will be able to see it immediately.",
+        "Publish"
+    );
+
+    if (!ok) return;
+
+    const res = await apiFetch(API + "/conflicts/publish", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + getToken() }
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+        showNotice(data.detail || "Publish failed.", "error");
+        return;
+    }
+
+    showNotice("Timetable published successfully!", "success");
+    await refreshGrid();
+}
+
+function onViewModeChange() {
+    currentViewMode = document.getElementById("viewModeSelect").value;
+    document.getElementById("dailyDaySelect").style.display = currentViewMode === "daily" ? "inline-block" : "none";
+    renderScheduleGrid();
+}
+
+function onDailyDayChange() {
+    currentDayFilter = document.getElementById("dailyDaySelect").value;
+    renderScheduleGrid();
 }
 
 async function initSchedulePage() {
@@ -2113,7 +2174,6 @@ async function initSchedulePage() {
   const groupsRes = await apiFetch(API + "/student-groups", { headers: { "Authorization": "Bearer " + token } });
   if (groupsRes.ok) scheduleGroupsCache = await groupsRes.json();
 
-  // ★ 填充专业过滤下拉框
   try {
     const progRes = await apiFetch(API + "/programs", { headers: { "Authorization": "Bearer " + token } });
     if (progRes.ok) {
@@ -2121,9 +2181,7 @@ async function initSchedulePage() {
       const sel = document.getElementById("programFilter");
       if (sel) {
         let opts = `<option value="all">All Programs</option>`;
-        progs.forEach(p => {
-          opts += `<option value="${p.program_name}">${p.program_name}</option>`;
-        });
+        progs.forEach(p => { opts += `<option value="${p.program_name}">${p.program_name}</option>`; });
         sel.innerHTML = opts;
       }
     }
@@ -2152,13 +2210,18 @@ function renderScheduleGrid() {
   const table = document.getElementById("gridTable");
   const { days, time_slots, cells } = scheduleData;
 
+  let renderDays = days;
+  if (currentViewMode === "daily") {
+      renderDays = [currentDayFilter];
+  }
+
   let html = "<thead><tr><th>Time</th>";
-  days.forEach(d => html += `<th>${d}</th>`);
+  renderDays.forEach(d => html += `<th>${d}</th>`);
   html += "</tr></thead><tbody>";
 
   time_slots.forEach(slot => {
     html += `<tr><td class="slot-label">${slot}</td>`;
-    days.forEach(day => {
+    renderDays.forEach(day => {
       const cell = cells.find(c => c.day === day && c.time_slot === slot);
       let entries = cell ? cell.entries : [];
 
@@ -2201,6 +2264,21 @@ function renderScheduleGrid() {
   });
   html += "</tbody>";
   table.innerHTML = html;
+
+  const wrapper = document.getElementById("gridWrapper");
+  let overlay = document.getElementById("notPublishedOverlay");
+
+  if (!scheduleIsAdmin && !scheduleData.published) {
+      if (!overlay) {
+          overlay = document.createElement("div");
+          overlay.id = "notPublishedOverlay";
+          overlay.className = "not-published-overlay";
+          overlay.innerHTML = `<div>🔒 Timetable Not Published</div><div style="font-size:14px; font-weight:normal;">The administrator is still reviewing the schedule.</div>`;
+          wrapper.appendChild(overlay);
+      }
+  } else {
+      if (overlay) overlay.remove();
+  }
 
   const errors = scheduleData.error_count || 0;
   const warnings = scheduleData.warning_count || 0;
@@ -3608,7 +3686,7 @@ const SIDEBAR_ITEMS = [
   { href: "/schedule.html",         label: "Schedule Grid",         roles: ["admin"],                       sprint: 3 },
 
   // ---- Sprint 4: Interactive Grid & Review (US-17 ~ US-20) ----
-  { href: "/personal-timetable.html", label: "My Timetable",        roles: ["teacher", "student"],          sprint: 4 },
+  { href: "/schedule.html",         label: "My Timetable",          roles: ["teacher", "student"],          sprint: 4 },
   { href: "/room-fitting.html",     label: "Smart Room Fitting",    roles: ["admin"],                       sprint: 4 },
 
   // ---- Sprint 5: Analytics & System Management (US-27 ~ US-31) ----
@@ -3616,7 +3694,7 @@ const SIDEBAR_ITEMS = [
   { href: "/audit-log.html",        label: "Audit Log",             roles: ["admin"],                       sprint: 5 },
 ];
 
-const CURRENT_SPRINT = 3;
+const CURRENT_SPRINT = 4;
 const SIDEBAR_ACTIONS = [];
 
 const SIDEBAR_CSS = `

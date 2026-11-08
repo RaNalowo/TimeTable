@@ -35,6 +35,7 @@ class User(Base):
 
     # Student-specific
     group_id = Column(Integer, ForeignKey("student_groups.id"), nullable=True)
+    sub_group = Column(String, nullable=True)  # ★ 新增：记录学生属于哪个子组（1, 2, 3等）
 
     roles = relationship("Role", secondary=user_roles, back_populates="users")
     group = relationship("StudentGroup", foreign_keys=[group_id])
@@ -134,9 +135,8 @@ class StudentGroup(Base):
     year_override = Column(Integer, nullable=True)
     student_count = Column(Integer, default=0)
 
-    # ★ 新增
-    sub_group_count = Column(Integer, default=3, nullable=False)   # practice 拆几组
-    track = Column(String, nullable=True)                          # "AI" / "CYBER" / "FRONT" / "BACK"
+    sub_group_count = Column(Integer, default=3, nullable=False)
+    track = Column(String, nullable=True)
 
     program = relationship("Program")
 
@@ -154,10 +154,9 @@ class Course(Base):
     lab_hours = Column(Integer, default=0)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
 
-    # ★ 新增
     program_id = Column(Integer, ForeignKey("programs.id"), nullable=False, index=True)
     is_elective = Column(Boolean, default=False, nullable=False)
-    track = Column(String, nullable=True)   # NULL = 所有组；"AI"/"CYBER"/"FRONT"/"BACK" = 只该方向
+    track = Column(String, nullable=True)
 
     department = relationship("Department")
     program = relationship("Program")
@@ -177,6 +176,9 @@ class Semester(Base):
     start_date = Column(String, nullable=False)
     end_date = Column(String, nullable=False)
     is_active = Column(Boolean, default=False)
+
+    is_published = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -239,7 +241,6 @@ class ScheduleEntry(Base):
     day = Column(String, nullable=False)
     session_type = Column(String, nullable=True)
 
-    # ★ 新增：practice/lab 的子组编号，lecture 为 NULL
     sub_group = Column(String, nullable=True)
 
     time_slot_id = Column(Integer, ForeignKey("time_slots.id"), nullable=True)
