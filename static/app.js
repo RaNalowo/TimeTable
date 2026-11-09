@@ -2168,6 +2168,25 @@ async function initSchedulePage() {
   const me = await meRes.json();
   scheduleIsAdmin = me.roles.includes("admin");
 
+  const isTeacher = me.roles.includes("teacher");
+
+  if (!scheduleIsAdmin) {
+      const refreshBtn = document.getElementById("refreshBtn");
+      const rescanBtn = document.getElementById("rescanBtn");
+      const summaryText = document.getElementById("summaryText");
+      const conflictsPanel = document.getElementById("conflictsPanel");
+
+      if (refreshBtn) refreshBtn.style.display = "none";
+      if (rescanBtn) rescanBtn.style.display = "none";
+      if (summaryText) summaryText.style.display = "none";
+      if (conflictsPanel) conflictsPanel.style.display = "none";
+
+      if (!isTeacher) {
+          const progFilter = document.getElementById("programFilterWrapper");
+          if (progFilter) progFilter.style.display = "none";
+      }
+  }
+
   const roomsRes = await apiFetch(API + "/rooms", { headers: { "Authorization": "Bearer " + token } });
   if (roomsRes.ok) roomsCache = await roomsRes.json();
 
@@ -2213,6 +2232,9 @@ function renderScheduleGrid() {
   let renderDays = days;
   if (currentViewMode === "daily") {
       renderDays = [currentDayFilter];
+      table.style.maxWidth = "600px";
+  } else {
+      table.style.maxWidth = "1200px";
   }
 
   let html = "<thead><tr><th>Time</th>";
@@ -2250,8 +2272,11 @@ function renderScheduleGrid() {
                  onclick="openMoveModal(${e.id}, ${escapeHTML(JSON.stringify(e.course_code))}, '${day}', '${slot}')"
                  onmouseenter="showEntryTooltip(event, ${e.id})"
                  onmouseleave="hideTooltip()">
-              <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
+               <span class="alert-icon">${e.has_conflict ? "⚠" : ""}</span>
               <div class="course">${escapeHTML(e.course_code)} <span class="type">${escapeHTML(e.session_type)}</span></div>
+              <div class="meta" style="font-size:11px; color:#4b5563; margin-bottom:3px; white-space: normal; word-wrap: break-word; line-height: 1.2;">
+                ${escapeHTML(e.course_name || '')}
+              </div>
               <div class="meta">${escapeHTML(e.room_code)} · ${escapeHTML(e.teacher_name || "-")}</div>
               <div class="meta" style="font-size:10px;color:#888;">${escapeHTML(e.target_groups || "")}</div>
             </div>

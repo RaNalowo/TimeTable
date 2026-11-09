@@ -38,6 +38,7 @@ def _slot_label(e): return e.time_slot.slot_label if e.time_slot else None
 
 
 def _course_code(e): return e.course.course_code if e.course else None
+def _course_name(e): return e.course.course_name if e.course else None
 
 
 def _room_code(e): return e.room.room_code if e.room else None
@@ -291,7 +292,9 @@ def grid(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         if not label: continue
         key = f"{e.day}|{label}"
         cell_map.setdefault(key, []).append({
-            "id": e.id, "course_code": _course_code(e), "session_type": e.session_type,
+            "id": e.id, "course_code": _course_code(e),
+            "course_name": _course_name(e),  # ★ 新增这一行
+            "session_type": e.session_type,
             "room_code": _room_code(e), "teacher_name": _teacher_name(e),
             "target_groups": _group_code(e), "has_conflict": e.id in conflicting_ids,
         })

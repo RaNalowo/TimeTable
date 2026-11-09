@@ -22,11 +22,30 @@
     button.btn-refresh { background: #059669; }
     button.btn-publish { background: #8b5cf6; font-weight: bold; }
     button.btn-publish:hover { background: #7c3aed; }
-    .grid-wrapper { overflow-x: auto; position: relative; }
-    table.grid { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 900px; }
-    table.grid th { background: #f9fafb; padding: 8px; font-weight: 600; border: 1px solid #e5e7eb; text-align: center; }
-    table.grid td { border: 1px solid #e5e7eb; padding: 4px; vertical-align: top; height: 90px; background: #fff; position: relative; }
+    .grid-wrapper { overflow-x: auto; position: relative; padding: 10px 0; }
+
+    table.grid {
+        width: 100%;
+        max-width: 1200px; /* ★ 核心：限制最大宽度，让表格紧凑美观 */
+        border-collapse: collapse;
+        font-size: 12px;
+        table-layout: fixed;
+        background: #fff;
+    }
+    table.grid th { background: #f9fafb; padding: 10px; font-weight: 600; border: 1px solid #e5e7eb; text-align: center; }
+
+     table.grid td {
+        border: 1px solid #e5e7eb;
+        padding: 6px;
+        vertical-align: top;
+        height: 110px;
+        background: #fff;
+        position: relative;
+        word-wrap: break-word;
+        white-space: normal;
+    }
     table.grid td.slot-label { background: #f9fafb; font-weight: 600; text-align: center; width: 100px; vertical-align: middle; }
+
     .entry-card { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; padding: 6px 8px; margin-bottom: 4px; font-size: 11px; cursor: grab; transition: transform 0.1s, box-shadow 0.1s; position: relative; }
     .entry-card:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
     .entry-card:active { cursor: grabbing; }
@@ -81,8 +100,11 @@
 
       <div class="panel">
         <div class="toolbar">
-          <button class="btn btn-refresh" onclick="refreshGrid()">Refresh</button>
-          <button class="btn" onclick="rescanConflicts()">Re-scan Conflicts</button>
+          <!-- ★ 新增 id="refreshBtn" -->
+          <button class="btn btn-refresh" id="refreshBtn" onclick="refreshGrid()">Refresh</button>
+          <!-- ★ 新增 id="rescanBtn" -->
+          <button class="btn" id="rescanBtn" onclick="rescanConflicts()">Re-scan Conflicts</button>
+
           <div style="display:flex; align-items:center; gap:8px; margin-left: 10px;">
             <select id="viewModeSelect" onchange="onViewModeChange()" style="padding:6px; border-radius:6px; border:1px solid #ccc;">
                 <option value="weekly">Weekly View</option>
@@ -96,23 +118,28 @@
                 <option value="Fri">Friday</option>
             </select>
           </div>
-          <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+
+          <!-- ★ 新增 id="programFilterWrapper" -->
+          <div style="display:flex; align-items:center; gap:8px; margin-left:auto;" id="programFilterWrapper">
             <label style="font-size:13px; color:#555;">Filter by Program:</label>
             <select id="programFilter" onchange="onScheduleFilterChange()" style="padding:6px; border-radius:6px; border:1px solid #ccc;">
               <option value="all">All Programs</option>
             </select>
           </div>
+
           <span style="font-size:13px;color:#666;margin-left:10px;" id="summaryText"></span>
         </div>
         <div class="grid-wrapper" id="gridWrapper">
           <table class="grid" id="gridTable"></table>
         </div>
-        <p style="font-size:12px;color:#888;margin-top:12px;">
+        <!-- ★ 新增 id="tipText" 供隐藏 -->
+        <p style="font-size:12px;color:#888;margin-top:12px;" id="tipText">
           <b>Tip:</b> Admins can drag any class card to an empty slot (blue highlight) to move it, or onto an occupied slot (yellow highlight) to swap the two sessions.
         </p>
       </div>
 
-      <div class="panel">
+      <!-- ★ 新增 id="conflictsPanel" -->
+      <div class="panel" id="conflictsPanel">
         <h2>Active Conflicts</h2>
         <div id="conflictList"></div>
       </div>
@@ -152,14 +179,12 @@
     </div>
   </div>
 
-  <!-- ★ 补全的全局提示框 (Notice) -->
   <div id="pageNotice" style="
     display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
     padding:12px 20px; border-radius:8px; z-index:3000;
     box-shadow:0 4px 12px rgba(0,0,0,0.15); font-size:14px; font-weight:600;">
   </div>
 
-  <!-- ★ 补全的全局确认弹窗 (Confirm Modal) -->
   <div id="confirmModal">
     <div style="
       background:#fff; padding:24px; border-radius:12px;

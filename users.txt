@@ -1,5 +1,8 @@
-230103736@sdu.edu.kz  Student123!
+260103738@sdu.edu.kz  Student123!
+240103416@sdu.edu.kz
 
-k.mamay@sdu.edu.kz  Teacher123!
+b.shaimenov@sdu.edu.kz Teacher123!
+n.sabitov@sdu.edu.kz
+
 
 admin@sdu.edu.kz  Admin123!
