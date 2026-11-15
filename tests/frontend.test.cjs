@@ -2,7 +2,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../static/app.js'), 'utf8');
+const path = require('node:path');
+function jsFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap(e => e.isDirectory() ? jsFiles(path.join(dir, e.name))
+      : e.name.endsWith('.js') ? [path.join(dir, e.name)] : [])
+    .sort();
+}
+const source = jsFiles(path.join(__dirname, '../static/js')).map(f => fs.readFileSync(f, 'utf8')).join('\n');
 
 function setup(fetch) {
   const nodes = {};

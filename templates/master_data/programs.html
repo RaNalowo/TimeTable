@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manage Programs</title>
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <style>
+
+    header { background: #fff; padding: 16px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px; display: flex; justify-content: space-between; }
+
+    form#programForm { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: start; }
+    
+    input, select { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; width: 100%; height: 38px; }
+    button[type="submit"] { padding: 9px 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; height: 38px; }
+    
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9fafb; font-weight: 600; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; }
+    .badge-code { background: #f3f4f6; color: #374151; }
+    .badge-dept { background: #fef3c7; color: #92400e; }
+
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
+      <header>
+        <h1>Manage Programs</h1>
+        <span id="countLabel" style="font-size:13px; color:#666;"></span>
+      </header>
+
+      <div class="panel" id="formPanel" style="display:none;">
+        <h2 id="formTitle">Add Program</h2>
+            <p style="font-size:12px; color:#666; margin-top:-10px; margin-bottom:15px;">Note: Separate multiple tracks with commas (e.g., AI,CYBER,FRONT)</p>        <form id="programForm" novalidate>
+          <div class="form-field">
+            <input id="program_code" placeholder="Program code (e.g., 0105)" />
+            <div class="field-msg" id="program_codeMsg"></div>
+          </div>
+          <div class="form-field">
+            <input id="program_name" placeholder="Program name (e.g., Data Science)" />
+            <div class="field-msg" id="program_nameMsg"></div>
+          </div>
+          <div class="form-field">
+            <input id="tracks" placeholder="Tracks (e.g. AI,CYBER,FRONT,BACK)" />
+            <div class="field-msg" id="tracksMsg"></div>
+          </div>
+          <div class="form-field">
+            <select id="department_id">
+              <option value="">-- Select department --</option>
+            </select>
+            <div class="field-msg" id="department_idMsg"></div>
+          </div>
+          <button type="submit" id="formSubmitBtn">Save Program</button>
+        </form>
+        <p id="formMsg" style="font-size:13px;"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Program Directory</h2>
+        <p id="accessMsg" style="font-size:13px;color:#888;"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Department</th>
+              <th>Tracks</th>
+              <th>Student Groups</th>
+              <th id="actionCol">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="programTable"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+  <script src="/static/js/core/api.js"></script>
+  <script src="/static/js/core/ui.js"></script>
+  <script src="/static/js/core/sidebar.js"></script>
+  <script src="/static/js/master_data/programs.js"></script>
+</body>
+</html>

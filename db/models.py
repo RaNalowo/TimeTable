@@ -35,7 +35,7 @@ class User(Base):
 
     # Student-specific
     group_id = Column(Integer, ForeignKey("student_groups.id"), nullable=True)
-    sub_group = Column(String, nullable=True)  # ★ 新增：记录学生属于哪个子组（1, 2, 3等）
+    sub_group = Column(String, nullable=True)
 
     roles = relationship("Role", secondary=user_roles, back_populates="users")
     group = relationship("StudentGroup", foreign_keys=[group_id])
@@ -258,3 +258,22 @@ class ScheduleEntry(Base):
     teacher = relationship("Teacher")
     group = relationship("StudentGroup")
     semester = relationship("Semester")
+
+
+# ============================================================
+# Change Requests (US24)
+# ============================================================
+
+class ChangeRequest(Base):
+    __tablename__ = "change_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(Integer, ForeignKey("schedule_entries.id"), nullable=False)
+    requester_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    reason = Column(String, nullable=False)
+    status = Column(String, default="pending")
+    admin_note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_read = Column(Boolean, default=False)
+
+    entry = relationship("ScheduleEntry")
+    requester = relationship("User")

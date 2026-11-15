@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Schedule Grid</title>
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+
+  <style>
+    #alertBanner { display: none; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; align-items: center; gap: 12px; }
+    #alertBanner.show { display: flex; }
+    #alertBanner.error { background: #fee2e2; color: #991b1b; border-left: 4px solid #dc2626; }
+    #alertBanner.warning { background: #fef3c7; color: #92400e; border-left: 4px solid #f59e0b; }
+    #alertBanner.success { background: #dcfce7; color: #166534; border-left: 4px solid #16a34a; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+
+    button.btn-refresh { background: #059669; }
+    button.btn-publish { background: #8b5cf6; font-weight: bold; }
+    button.btn-publish:hover { background: #7c3aed; }
+    button.btn-print { background: #0ea5e9; font-weight: bold; }
+    button.btn-print:hover { background: #0284c7; }
+
+    .grid-wrapper { overflow-x: auto; position: relative; padding: 10px 0; }
+
+    table.grid {
+        width: 100%;
+        max-width: 1200px;
+        border-collapse: collapse;
+        font-size: 12px;
+        table-layout: fixed;
+        background: #fff;
+    }
+    table.grid th { background: #f9fafb; padding: 10px; font-weight: 600; border: 1px solid #e5e7eb; text-align: center; }
+
+     table.grid td {
+        border: 1px solid #e5e7eb;
+        padding: 6px;
+        vertical-align: top;
+        height: 110px;
+        background: #fff;
+        position: relative;
+        word-wrap: break-word;
+        white-space: normal;
+    }
+    table.grid td.slot-label { background: #f9fafb; font-weight: 600; text-align: center; width: 100px; vertical-align: middle; }
+
+    .entry-card { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; padding: 6px 8px; margin-bottom: 4px; font-size: 11px; cursor: grab; transition: transform 0.1s, box-shadow 0.1s; position: relative; }
+    .entry-card:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    .entry-card:active { cursor: grabbing; }
+    .entry-card .course { font-weight: bold; color: #1e40af; margin-bottom: 2px; }
+    .entry-card .meta { color: #4b5563; line-height: 1.35; }
+    .entry-card .type { display: inline-block; padding: 0 5px; border-radius: 8px; background: #dbeafe; color: #3730a3; font-size: 10px; margin-left: 3px; }
+    .entry-card.conflict-error { background: #fee2e2; border-color: #dc2626; animation: pulse 2s infinite; }
+    .entry-card.conflict-error .course { color: #991b1b; }
+    .entry-card .alert-icon { position: absolute; top: 4px; right: 5px; font-size: 13px; }
+    @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); } 50% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); } }
+    .entry-card.dragging { opacity: 0.35; }
+    table.grid td.drop-target { background: #dbeafe !important; outline: 2px dashed #2563eb; outline-offset: -4px; }
+    table.grid td.drop-target-occupied { background: #fef3c7 !important; outline: 2px dashed #f59e0b; outline-offset: -4px; }
+
+    #moveModal, #swapModal, #requestModal, #detailsModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; }
+    #moveModal.open, #swapModal.open, #requestModal.open, #detailsModal.open { display: flex; }
+    #moveModal .box, #swapModal .box, #requestModal .box, #detailsModal .box { background: #fff; padding: 24px; border-radius: 12px; width: 360px; max-width: 90%; }
+    #moveModal label { display: block; font-size: 13px; color: #444; margin: 10px 0 4px; }
+    #moveModal select, #requestModal textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; box-sizing: border-box; }
+    .row-actions { margin-top: 16px; display: flex; gap: 10px; justify-content: flex-end; }
+    button.btn-cancel { background: #6b7280; }
+
+    .conflict-item { padding: 10px 12px; margin-bottom: 8px; border-radius: 8px; font-size: 13px; }
+    .conflict-item.error { background: #fef2f2; border-left: 3px solid #dc2626; color: #991b1b; }
+    .conflict-item.warning { background: #fffbeb; border-left: 3px solid #f59e0b; color: #92400e; }
+    .not-published-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.9); z-index: 10; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; color: #6b7280; flex-direction: column; gap: 10px; }
+
+    #confirmModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2500; align-items: center; justify-content: center; }
+
+    /* 管理员侧边栏面板样式 */
+    #adminRequestPanel { position: fixed; right: 20px; top: 80px; width: 320px; background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 1500; max-height: 80vh; overflow-y: auto; border: 1px solid #e5e7eb; display: none; }
+    #adminRequestPanel .header { padding: 12px 16px; background: #f8fafc; border-bottom: 1px solid #e5e7eb; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; }
+    .req-card { padding: 12px 16px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+    .req-card .title { font-weight: bold; color: #1e40af; }
+    .req-card .meta { color: #6b7280; font-size: 11px; margin: 4px 0; }
+    .req-card .reason { background: #f9fafb; padding: 8px; border-radius: 6px; margin: 8px 0; font-style: italic; color: #374151; }
+    .req-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .req-actions button { flex: 1; padding: 6px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; }
+    .req-actions .approve { background: #dcfce7; color: #166534; font-weight: bold; }
+    .req-actions .reject { background: #fee2e2; color: #991b1b; font-weight: bold; }
+
+    #reqToggleBtn {
+        position: fixed; right: 20px; top: 100px;
+        background: #fff; border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        border-radius: 8px; padding: 10px 16px;
+        cursor: pointer; z-index: 1400;
+        display: none; align-items: center; gap: 8px;
+        font-weight: bold; font-size: 14px; color: #374151;
+    }
+    #reqToggleBtn:hover { background: #f9fafb; }
+    #reqToggleBtn .badge-red {
+        background: #ef4444; color: #fff; border-radius: 50%;
+        width: 20px; height: 20px; display: inline-flex;
+        align-items: center; justify-content: center; font-size: 12px;
+    }
+
+    .exporting * { box-shadow: none !important; }
+    table.grid tr, table.grid td, .entry-card { page-break-inside: avoid !important; }
+
+    @keyframes highlightPulse {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
+        70% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+    .highlight-entry {
+        animation: highlightPulse 1.5s infinite;
+        border-color: #ef4444 !important;
+        transform: scale(1.02);
+        z-index: 100;
+        position: relative;
+    }
+
+    #tooltip { position: fixed; display: none; background: #111827; color: #fff; padding: 10px 12px; border-radius: 8px; font-size: 12px; max-width: 320px; z-index: 3000; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25); line-height: 1.45; }
+    #tooltip .tt-title { font-weight: bold; color: #fbbf24; margin-bottom: 4px; }
+    #tooltip .tt-label { color: #9ca3af; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <div id="userNotificationBanner" style="display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 3000; width: 90%; max-width: 600px; background: #fff; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); border-left: 4px solid #3b82f6; padding: 16px; align-items: flex-start; gap: 12px;">
+      <div style="font-size: 24px; line-height: 1;">🔔</div>
+      <div style="flex: 1;">
+          <h4 style="margin: 0 0 4px 0; font-size: 15px; color: #1e293b;">Schedule Change Update</h4>
+          <div id="userNotificationContent" style="font-size: 14px; color: #475569; margin-bottom: 12px;"></div>
+          <button onclick="dismissNotification()" style="background: #e2e8f0; color: #334155; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">Got it, Dismiss</button>
+      </div>
+  </div>
+  <div class="app-layout">
+    <div id="sidebar-mount"></div>
+    <main class="main-content">
+      <header>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <h1>Schedule Grid</h1>
+            <span id="publishStatus" class="badge" style="display:none; font-size:14px; padding:4px 10px; border-radius:8px;"></span>
+        </div>
+        <div>
+            <button id="printBtn" class="btn btn-print" onclick="exportTimetable()" style="padding:10px 20px; font-size:14px; border-radius:8px; margin-right: 10px;">
+                🖨️ Print / Export PDF
+            </button>
+            <button id="publishBtn" class="btn btn-publish" onclick="publishTimetable()" style="display:none; padding:10px 20px; font-size:14px; border-radius:8px;">
+                🚀 Publish Timetable
+            </button>
+        </div>
+      </header>
+
+      <div id="alertBanner"></div>
+
+      <div class="panel">
+        <div class="toolbar">
+          <button class="btn btn-refresh" id="refreshBtn" onclick="refreshGrid()">Refresh</button>
+          <button class="btn" id="rescanBtn" onclick="rescanConflicts()">Re-scan Conflicts</button>
+
+          <div style="display:flex; align-items:center; gap:8px; margin-left: 10px;">
+            <select id="viewModeSelect" onchange="onViewModeChange()" style="padding:6px; border-radius:6px; border:1px solid #ccc;">
+                <option value="weekly">Weekly View</option>
+                <option value="daily">Daily View</option>
+            </select>
+            <select id="dailyDaySelect" onchange="onDailyDayChange()" style="display:none; padding:6px; border-radius:6px; border:1px solid #ccc;">
+                <option value="Mon">Monday</option>
+                <option value="Tue">Tuesday</option>
+                <option value="Wed">Wednesday</option>
+                <option value="Thu">Thursday</option>
+                <option value="Fri">Friday</option>
+            </select>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px; margin-left:auto;" id="programFilterWrapper">
+            <label style="font-size:13px; color:#555;">Filter by Program:</label>
+            <select id="programFilter" onchange="onScheduleFilterChange()" style="padding:6px; border-radius:6px; border:1px solid #ccc;">
+              <option value="all">All Programs</option>
+            </select>
+          </div>
+
+          <span style="font-size:13px;color:#666;margin-left:10px;" id="summaryText"></span>
+        </div>
+
+        <div id="print-area">
+            <div style="text-align: center; margin-bottom: 10px; display: none;" id="print-title">
+                <h2 style="margin:0;">Official Timetable</h2>
+                <p style="margin: 5px 0; font-size: 14px; color: #555;">Generated on <span id="print-date"></span></p>
+            </div>
+            <div class="grid-wrapper" id="gridWrapper">
+              <table class="grid" id="gridTable"></table>
+            </div>
+        </div>
+
+        <p style="font-size:12px;color:#888;margin-top:12px;" id="tipText">
+          <b>Tip:</b> Admins can drag any class card to an empty slot (blue highlight) to move it, or onto an occupied slot (yellow highlight) to swap the two sessions.
+        </p>
+      </div>
+
+      <div class="panel" id="conflictsPanel">
+        <h2>Active Conflicts</h2>
+        <div id="conflictList"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="reqToggleBtn" onclick="toggleRequestPanel(true)">
+      📥 Requests <span class="badge-red" id="reqBadge" style="display:none;">0</span>
+  </div>
+
+  <div id="adminRequestPanel">
+      <div class="header">
+          <span>📥 Change Requests <span id="reqCount" style="background:#ef4444; color:#fff; border-radius:10px; padding:2px 8px; font-size:12px; margin-left:8px;">0</span></span>
+          <span onclick="toggleRequestPanel(false)" style="cursor:pointer; font-size:18px; color:#9ca3af;" title="Collapse">&times;</span>
+      </div>
+      <div id="reqList"></div>
+  </div>
+
+  <div id="moveModal">
+    <div class="box">
+      <h3>Move Session</h3>
+      <p style="font-size:13px;color:#666;margin-top:0;" id="moveEntryLabel"></p>
+      <label>Day</label>
+      <select id="moveDay"></select>
+      <label>Time Slot</label>
+      <select id="moveSlot"></select>
+      <label>Room</label>
+      <select id="moveRoom"></select>
+      <div class="row-actions">
+        <button class="btn btn-cancel" onclick="closeMoveModal()">Cancel</button>
+        <button class="btn" onclick="submitMove()">Move</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="swapModal">
+    <div class="box">
+      <h3>Swap Two Sessions?</h3>
+      <p style="font-size:13px;color:#666;margin-top:0;">The target slot is already occupied. Do you want to swap the two sessions?</p>
+      <div class="swap-line" id="swapLineA" style="font-size:13px; padding:10px; margin:8px 0; background:#f9fafb; border-left:3px solid #2563eb;"></div>
+      <div class="swap-arrow" style="text-align:center; margin:4px 0;">⇅</div>
+      <div class="swap-line" id="swapLineB" style="font-size:13px; padding:10px; margin:8px 0; background:#f9fafb; border-left:3px solid #2563eb;"></div>
+      <div class="row-actions">
+        <button class="btn btn-cancel" onclick="closeSwapModal()">Cancel</button>
+        <button class="btn" onclick="confirmSwap()">Confirm Swap</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="detailsModal">
+    <div class="box">
+      <h3 style="margin-top:0;">Course Details</h3>
+      <h2 id="detailCourseName" style="color:#1e40af; font-size:18px; margin: 12px 0;"></h2>
+
+      <table style="width:100%; font-size:13px; text-align:left; border-collapse:collapse; margin-bottom:16px;">
+        <tr style="border-bottom:1px solid #f3f4f6;"><th style="padding:8px 0; color:#6b7280; font-weight:normal; width:80px;">Type</th><td id="detailType" style="font-weight:600;"></td></tr>
+        <tr style="border-bottom:1px solid #f3f4f6;"><th style="padding:8px 0; color:#6b7280; font-weight:normal;">Time</th><td id="detailTime"></td></tr>
+        <tr style="border-bottom:1px solid #f3f4f6;"><th style="padding:8px 0; color:#6b7280; font-weight:normal;">Room</th><td id="detailRoom"></td></tr>
+        <tr style="border-bottom:1px solid #f3f4f6;"><th style="padding:8px 0; color:#6b7280; font-weight:normal;">Teacher</th><td id="detailTeacher"></td></tr>
+        <tr><th style="padding:8px 0; color:#6b7280; font-weight:normal;">Group</th><td id="detailGroup"></td></tr>
+      </table>
+
+      <div class="row-actions">
+        <button class="btn btn-cancel" onclick="closeDetailsModal()">Close</button>
+        <button class="btn" id="detailRequestBtn" onclick="startRequestFromDetails()" style="background:#8b5cf6;">✏️ Request Change</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="requestModal">
+    <div class="box">
+      <h3>Request Schedule Change</h3>
+      <p style="font-size:13px;color:#666;margin-top:0;" id="reqEntryLabel"></p>
+      <label>Reason for change *</label>
+      <textarea id="reqReason" rows="3" placeholder="Please explain why you need to reschedule this class..."></textarea>
+      <div class="row-actions">
+        <button class="btn btn-cancel" onclick="closeRequestModal()">Cancel</button>
+        <button class="btn" onclick="submitChangeRequest()" style="background:#8b5cf6;">Submit Request</button>
+      </div>
+    </div>
+  </div>
+
+    <div id="tooltip"></div>
+
+
+  <script src="/static/js/core/api.js"></script>
+  <script src="/static/js/core/ui.js"></script>
+  <script src="/static/js/core/sidebar.js"></script>
+  <script src="/static/js/scheduling/schedule.js"></script>
+</body>
+</html>
