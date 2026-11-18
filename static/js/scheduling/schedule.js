@@ -214,9 +214,9 @@ function renderScheduleGrid() {
           const hoverEvents = scheduleIsAdmin ? `onmouseenter="showEntryTooltip(event, ${e.id})" onmouseleave="hideTooltip()"` : '';
 
           html += `
-            <div class="entry-card ${cls}"
+            <div class="entry-card ${cls}" data-entry-id="${e.id}"
                  data-entry-id="${e.id}"
-                 draggable="true"
+                 draggable="${scheduleIsAdmin}"
                  ondragstart="onDragStart(event, ${e.id})"
                  ondragend="onDragEnd(event)"
                  onclick='handleCardClick(${entryJson}, ${e.id}, "${day}", "${slot}")'
@@ -636,6 +636,7 @@ async function loadChangeRequests() {
             <div class="meta">From: <b>${escapeHTML(r.requester_name)}</b> (${escapeHTML(r.requester_role)})</div>
             <div class="meta">Current: ${escapeHTML(r.day)} ${escapeHTML(r.time_slot)} · Room ${escapeHTML(r.room_code)}</div>
             <div class="reason">"${escapeHTML(r.reason)}"</div>
+            <input id="reqNote-${r.id}" maxlength="300" placeholder="Note to requester (optional)" onclick="event.stopPropagation()" style="width:100%;margin-top:8px;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;font-size:12px;" />
             <div class="req-actions">
                 <!-- ★ 加上 event.stopPropagation() 防止点击按钮时触发卡片定位 -->
                 <button class="approve" onclick="event.stopPropagation(); handleRequest(${r.id}, 'approved')">Approve</button>
@@ -649,7 +650,7 @@ async function handleRequest(reqId, status) {
     const res = await apiFetch(API + `/conflicts/requests/${reqId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + getToken() },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, admin_note: ((document.getElementById("reqNote-" + reqId) || {}).value || "").trim() || null })
     });
     const data = await res.json();
 
@@ -742,7 +743,7 @@ function showUserNotification() {
 
     const adminNote = n.admin_note ? `<br><span style="font-size:12px; color:#64748b;">Admin note: ${escapeHTML(n.admin_note)}</span>` : '';
 
-    content.innerHTML = `Your request for <b>${escapeHTML(n.course80_code)} - ${escapeHTML(n.course_name)}</b> has been ${statusText}.${adminNote}`;
+    content.innerHTML = `Your request for <b>${escapeHTML(n.course_code)} - ${escapeHTML(n.course_name)}</b> has been ${statusText}.${adminNote}`;
 
     banner.style.display = "flex";
 }

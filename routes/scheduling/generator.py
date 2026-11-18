@@ -619,7 +619,7 @@ def run_generation(
 
 
 @router.get("/entries")
-def list_entries(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_entries(admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     active = get_active_semester(db)
     if not active: return []
     entries = db.query(ScheduleEntry).filter_by(semester_id=active.id).all()

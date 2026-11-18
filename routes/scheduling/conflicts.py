@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import json
 import math
@@ -230,7 +230,7 @@ def scan_conflicts(db, entries=None):
 
 
 @router.get("/scan")
-def scan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def scan(admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     return scan_conflicts(db)
 
 
@@ -334,6 +334,7 @@ def get_block_entries(db, entry):
         session_type=entry.session_type,
         group_id=entry.group_id,
         teacher_id=entry.teacher_id,
+        sub_group=entry.sub_group,
         day=entry.day
     ).all()
 
@@ -368,8 +369,10 @@ def move_entry(entry_id: int, data: MoveRequest, admin: User = Depends(require_r
     if not entry: raise HTTPException(status_code=404, detail="Entry not found")
     if data.day not in DAYS: raise HTTPException(status_code=400, detail="Invalid day")
 
-    target_slot = db.query(TimeSlot).filter_by(slot_label=data.time_slot).first()
+    target_slot = db.query(TimeSlot).filter_by(slot_label=data.time_slot, is_active=True).first()
     if not target_slot: raise HTTPException(status_code=400, detail="Time slot not found")
+    if data.room_id is not None and db.get(Room, data.room_id) is None:
+        raise HTTPException(status_code=400, detail="Room not found")
 
     # 获取连堂块
     block_entries = get_block_entries(db, entry)
@@ -498,7 +501,7 @@ def swap_entries(data: SwapRequest, admin: User = Depends(require_role("admin"))
 
 class ChangeRequestCreate(BaseModel):
     entry_id: int
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ChangeRequestUpdate(BaseModel):
@@ -506,24 +509,45 @@ class ChangeRequestUpdate(BaseModel):
     admin_note: str | None = None
 
 
+def entries_visible_to(db, user, entries):
+    """Which of these schedule entries may this user see? Same rule as the grid."""
+    roles = [r.name for r in user.roles]
+    if "admin" in roles:
+        return list(entries)
+    if "teacher" in roles:
+        teacher = db.query(Teacher).filter((Teacher.user_id == user.id) | (Teacher.email == user.email)).first()
+        return [e for e in entries if teacher and e.teacher_id == teacher.id]
+    if "student" in roles and user.group_id:
+        return [e for e in entries
+                if e.group_id == user.group_id
+                and (e.session_type == "lecture" or e.sub_group == user.sub_group or e.sub_group is None)]
+    return []
+
+
+def _class_key(e):
+    """A 'class' = all hours of one course/type for one group (and sub-group)."""
+    return (e.course_id, e.group_id, e.sub_group, e.session_type)
+
+
 @router.post("/requests")
 def submit_request(data: ChangeRequestCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    entry = db.query(ScheduleEntry).filter_by(id=data.entry_id).first()
-    if not entry: raise HTTPException(status_code=404, detail="Entry not found")
+    roles = [r.name for r in user.roles]
+    if "admin" in roles:
+        raise HTTPException(status_code=403, detail="Admins edit the timetable directly; requests are for students and teachers.")
+    active = get_active_semester(db)
+    if not active or not active.is_published:
+        raise HTTPException(status_code=400, detail="Requests can only be made for a published timetable.")
+    entry = db.query(ScheduleEntry).filter_by(id=data.entry_id, semester_id=active.id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    if entry not in entries_visible_to(db, user, [entry]):
+        raise HTTPException(status_code=403, detail="You can only request changes for your own classes.")
 
-    # Check if there's already a pending request for this entry by this user
-    existing = db.query(ChangeRequest).filter_by(
-        entry_id=data.entry_id, requester_id=user.id, status="pending"
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="You already have a pending request for this class.")
+    for pending in db.query(ChangeRequest).filter_by(requester_id=user.id, status="pending").all():
+        if pending.entry and _class_key(pending.entry) == _class_key(entry):
+            raise HTTPException(status_code=400, detail="You already have a pending request for this class.")
 
-    req = ChangeRequest(
-        entry_id=data.entry_id,
-        requester_id=user.id,
-        reason=data.reason,
-        status="pending"
-    )
+    req = ChangeRequest(entry_id=entry.id, requester_id=user.id, reason=data.reason.strip(), status="pending")
     db.add(req)
     db.commit()
     db.refresh(req)
@@ -573,6 +597,8 @@ def update_request(req_id: int, data: ChangeRequestUpdate, admin: User = Depends
     req = db.query(ChangeRequest).filter_by(id=req_id).first()
     if not req: raise HTTPException(status_code=404, detail="Request not found")
 
+    if req.status != "pending":
+        raise HTTPException(status_code=400, detail="This request has already been decided.")
     req.status = data.status
     req.admin_note = data.admin_note
     db.commit()
